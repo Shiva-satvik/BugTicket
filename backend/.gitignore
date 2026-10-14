@@ -1,0 +1,8 @@
+.env
+bugpilot.db
+demo_user_credentials.csv
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+chroma_db/

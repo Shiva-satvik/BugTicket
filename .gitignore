@@ -1,0 +1,9 @@
+DEMO_USER_CREDENTIALS.csv
+.env
+**/.env
+**/bugpilot.db
+**/demo_user_credentials.csv
+**/__pycache__/
+**/*.py[cod]
+**/node_modules/
+**/.venv/

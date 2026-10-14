@@ -1,0 +1,6 @@
+LOCAL DEMO LOGIN — FOR DEVELOPMENT ONLY
+
+Username: bugpilot.admin
+Password: BugPilotDemo!2026
+
+This account is included in the sample SQLite database for local testing. Change the password before using any shared or production environment. Do not publish this demo credential.
