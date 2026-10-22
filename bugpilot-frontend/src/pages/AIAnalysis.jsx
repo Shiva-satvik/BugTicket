@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 
-import { AlertCircle, Bot, CheckCircle2, Database, FileText, ShieldAlert, Sparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, Database, Download, FileText, ShieldAlert, Sparkles } from "lucide-react";
+import { jsPDF } from "jspdf";
 
 import { ticketApi, errorMessage } from "../api/services";
 
@@ -23,6 +24,64 @@ export default function AIAnalysisPage() {
       setResult(null);
     }
   }, [location.state]);
+
+  function downloadReport() {
+    if (!result) return;
+    const pdf = new jsPDF({ unit: "pt", format: "a4" });
+    const margin = 44;
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const maxWidth = pageWidth - margin * 2;
+    let y = 48;
+
+    const addText = (text, size = 10, bold = false, gap = 7) => {
+      pdf.setFont("helvetica", bold ? "bold" : "normal");
+      pdf.setFontSize(size);
+      const lines = pdf.splitTextToSize(String(text ?? "—"), maxWidth);
+      const lineHeight = size * 1.45;
+      if (y + lines.length * lineHeight > pageHeight - margin) {
+        pdf.addPage();
+        y = margin;
+      }
+      pdf.text(lines, margin, y);
+      y += lines.length * lineHeight + gap;
+    };
+
+    addText("BugPilot — AI Analysis Report", 18, true, 12);
+    addText(`Generated: ${new Date().toLocaleString()}`, 9, false, 12);
+    addText("Reported issue", 12, true, 4);
+    addText(ticket, 10);
+    addText("Summary", 12, true, 4);
+    addText(result.summary || result.problem || "Ticket analysis completed.");
+    addText("Severity", 12, true, 4);
+    addText(fmt(result.severity), 10);
+    addText("Confidence", 12, true, 4);
+    addText(result.confidence_score === undefined ? "Not available" : `${Math.round(Number(result.confidence_score) <= 1 ? Number(result.confidence_score) * 100 : Number(result.confidence_score))}%`);
+    addText("Category & module", 12, true, 4);
+    addText([result.category, result.module].filter(Boolean).join(" · ") || "Not specified");
+    addText("Ticket understanding", 12, true, 4);
+    addText(result.problem || result.ticket || ticket);
+    addText("Detailed analysis", 12, true, 4);
+    addText(result.analysis || "Not available");
+    addText("Historical evidence used by RAG", 12, true, 4);
+    addText(result.historical_evidence || "No historical evidence was returned.");
+    addText("Likely cause", 12, true, 4);
+    addText(result.likely_cause || "Not specified");
+    addText("Suggested resolution", 12, true, 4);
+    addText(result.suggested_resolution || "Not specified");
+    addText(`Confidence check — ${result.confidence_level || "Unrated"}`, 12, true, 4);
+    addText(result.confidence_reason || "Not specified");
+    const ticketSources = result.retrieval_diagnostics?.ticket_sources || [];
+    const documentSources = result.retrieval_diagnostics?.financial_document_sources || [];
+    addText("Retrieved historical tickets", 12, true, 4);
+    addText(ticketSources.length ? ticketSources.map((item) => `${item.ticket_code || "Ticket"} — ${item.module || "Module unknown"} — ${item.category || "Category unknown"}`).join("\n") : "No historical tickets retrieved.");
+    addText("Retrieved financial documents", 12, true, 4);
+    addText(documentSources.length ? documentSources.map((item) => `${item.document_code || "Document"} — ${item.title || "Untitled"} — ${item.module || "Module unknown"}`).join("\n") : "No financial documents retrieved.");
+    addText("Retrieval diagnostics", 12, true, 4);
+    addText(`Keyword: ${result.retrieval_diagnostics?.keyword_search || "unknown"}; Semantic: ${result.retrieval_diagnostics?.semantic_search || "unknown"}; Financial documents: ${result.retrieval_diagnostics?.financial_document_search || "unknown"}`);
+    const safeName = String(result.summary || "bugpilot-ai-analysis").replace(/[^a-z0-9-_]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "bugpilot-ai-analysis";
+    pdf.save(`${safeName}.pdf`);
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -45,7 +104,7 @@ export default function AIAnalysisPage() {
   return (
     <>
       <PageHeader
-        eyebrow="AI WORKSPACE"
+        eyebrow="AI TRIAGE"
         title="AI ticket analysis"
         description="Use BugPilot's existing analysis workflow to understand a reported issue and review suggested next steps."
       />
@@ -60,7 +119,7 @@ export default function AIAnalysisPage() {
             </div>
 
             <span className="ai-chip">
-              <Bot size={15} />
+              <Sparkles size={15} />
               AI assisted
             </span>
           </div>
@@ -90,7 +149,7 @@ export default function AIAnalysisPage() {
                 </>
               ) : (
                 <>
-                  <Bot size={17} />
+                  <Sparkles size={17} />
                   Analyze ticket
                 </>
               )}
@@ -110,7 +169,7 @@ export default function AIAnalysisPage() {
           <div className="explainer-art">
             <div className="orbit orbit-one" />
             <div className="orbit orbit-two" />
-            <div className="explainer-bot"><Bot size={36} /></div>
+            <div className="explainer-bot"><Sparkles size={36} /></div>
             <span className="orbit-dot dot-one" />
             <span className="orbit-dot dot-two" />
             <span className="orbit-dot dot-three" />
@@ -119,7 +178,7 @@ export default function AIAnalysisPage() {
           <p>Submit an issue to receive a structured analysis from your connected BugPilot backend.</p>
           <div className="explainer-list">
             <div><CheckCircle2 size={16} />Summary and categorization</div>
-            <div><CheckCircle2 size={16} />Severity and priority guidance</div>
+            <div><CheckCircle2 size={16} />Severity assessment and confidence guidance</div>
             <div><CheckCircle2 size={16} />Suggested resolution and confidence reason</div>
           </div>
           <small>Results depend on backend availability and your account's access.</small>
@@ -155,7 +214,6 @@ export default function AIAnalysisPage() {
             </div>
             <div className="result-metrics">
               <div><span>Severity</span><b>{fmt(result.severity)}</b></div>
-              <div><span>Priority</span><b>{fmt(result.priority)}</b></div>
               <div><span>Confidence</span><b>{result.confidence_score === undefined ? "—" : `${Math.round(Number(result.confidence_score) <= 1 ? Number(result.confidence_score) * 100 : Number(result.confidence_score))}%`}</b></div>
             </div>
             <ResultBlock title="Category & module" body={[result.category, result.module].filter(Boolean).join(" · ") || "Not specified"} />
@@ -179,6 +237,7 @@ export default function AIAnalysisPage() {
             </section>
             {result.missing_information?.length > 0 && <ResultBlock title="Information to collect" body={safeArray(result.missing_information).join(" · ")} />}
             <div className="modal-actions">
+              <button type="button" className="button button-secondary" onClick={downloadReport}><Download size={16} /> Download report as PDF</button>
               <button type="button" className="button button-secondary" onClick={() => setResult(null)}>Close results</button>
             </div>
           </section>

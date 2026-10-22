@@ -89,60 +89,57 @@ def validate_analysis_response(data: dict) -> dict:
     """
     Validate and normalize the structured response returned
     by the LLM.
+
+    Small local models occasionally omit a field or return an
+    unexpected value. Instead of failing the whole analysis
+    (which triggers the degraded fallback), missing or invalid
+    fields are filled with sensible defaults so the LLM result
+    still reaches the user.
     """
 
     if not isinstance(data, dict):
         raise ValueError("Analysis Agent response must be a JSON object.")
 
-    required_fields = [
-        "analysis",
-        "historical_evidence",
-        "severity",
-        "priority",
-        "likely_cause",
-        "suggested_resolution",
-        "missing_information",
-    ]
-
-    missing_fields = [field for field in required_fields if field not in data]
-
-    if missing_fields:
-        raise ValueError(
-            "Analysis Agent response is missing required fields: "
-            + ", ".join(missing_fields)
-        )
-
     # --------------------------------------------------------
-    # Validate severity
+    # Tolerant text extractor with defaults
     # --------------------------------------------------------
 
-    severity = str(data["severity"]).strip()
+    def _text(field: str, default: str) -> str:
+        value = data.get(field)
+        if value is None:
+            return default
+        cleaned = str(value).strip()
+        return cleaned or default
+
+    # --------------------------------------------------------
+    # Normalize severity (fill default instead of raising)
+    # --------------------------------------------------------
+
+    severity = _text("severity", "Medium").capitalize()
 
     if severity not in VALID_SEVERITIES:
-        raise ValueError(
-            f"Invalid severity returned by Analysis Agent: "
-            f"{severity}. Expected one of: "
-            f"{', '.join(sorted(VALID_SEVERITIES))}"
-        )
+        severity_aliases = {
+            "low": "Low",
+            "medium": "Medium",
+            "high": "High",
+            "critical": "Critical",
+        }
+        severity = severity_aliases.get(severity.lower(), "Medium")
 
     # --------------------------------------------------------
-    # Validate priority
+    # Normalize priority (fill default instead of raising)
     # --------------------------------------------------------
 
-    priority = str(data["priority"]).strip().upper()
+    priority = _text("priority", "P3").strip().upper()
 
     if priority not in VALID_PRIORITIES:
-        raise ValueError(
-            f"Invalid priority returned by Analysis Agent: "
-            f"{priority}. Expected one of: "
-            f"{', '.join(sorted(VALID_PRIORITIES))}"
-        )
+        priority = "P3"
 
     # --------------------------------------------------------
-    # Validate missing information
+    # Normalize missing information (fill default list)
     # --------------------------------------------------------
 
-    missing_information = data["missing_information"]
+    missing_information = data.get("missing_information")
 
     if missing_information is None:
         missing_information = []
@@ -151,24 +148,45 @@ def validate_analysis_response(data: dict) -> dict:
         missing_information = [missing_information]
 
     elif not isinstance(missing_information, list):
-        raise ValueError("missing_information must be a list of strings.")
+        missing_information = []
 
     # Make sure every item is a string.
     missing_information = [
         str(item).strip() for item in missing_information if str(item).strip()
     ]
 
+    if not missing_information:
+        missing_information = [
+            "Exact error message and code",
+            "Steps to reproduce",
+            "Affected user/role and timestamp",
+        ]
+
     # --------------------------------------------------------
     # Normalize text fields
     # --------------------------------------------------------
 
     return {
-        "analysis": str(data["analysis"]).strip(),
-        "historical_evidence": str(data["historical_evidence"]).strip(),
+        "analysis": _text(
+            "analysis",
+            "The model did not return a detailed analysis; "
+            "review the retrieved evidence manually.",
+        ),
+        "historical_evidence": _text(
+            "historical_evidence",
+            "No historical evidence summary was returned by the model.",
+        ),
         "severity": severity,
         "priority": priority,
-        "likely_cause": str(data["likely_cause"]).strip(),
-        "suggested_resolution": str(data["suggested_resolution"]).strip(),
+        "likely_cause": _text(
+            "likely_cause",
+            "Not confirmed; requires manual investigation.",
+        ),
+        "suggested_resolution": _text(
+            "suggested_resolution",
+            "Reproduce the issue, inspect application logs, and compare "
+            "with a known-good workflow before applying a fix.",
+        ),
         "missing_information": missing_information,
     }
 
@@ -208,7 +226,15 @@ def analyze_ticket(state: AnalysisState):
 
     prompt = f"""
 You are BugPilot, a senior enterprise software bug analyst.
-Analyze the ticket using only the ticket details and retrieved evidence. Do not invent facts. Historical records are leads, not proof of the current root cause. Clearly state uncertainty.
+Analyze THIS ticket using only the ticket details and retrieved evidence. Do not invent facts. Historical records are leads, not proof of the current root cause. Clearly state uncertainty.
+
+SPECIFICITY RULES (highest priority):
+- Every ticket is different. Never reuse a template answer. Your output must be recognizably about THIS ticket's exact symptom, module and error.
+- In "analysis" and "historical_evidence", cite the concrete ticket codes (e.g. BP-2026-000549) and document codes (e.g. FD-007) found in the retrieved evidence, and state in one sentence HOW each connects to this ticket.
+- "suggested_resolution" must be numbered steps whose targets come from THIS ticket and the evidence: name the exact interface/module/record type/error pattern to inspect, the system or table where applicable, and the specific observation that confirms or rules out each step.
+- Forbidden generic filler unless immediately followed by a concrete target: "investigate the issue", "check the configuration", "verify permissions", "review recent changes".
+- In "likely_cause", name the single most probable cause for THIS ticket and the strongest piece of evidence supporting it. If unconfirmed, add the specific finding that would confirm it.
+- If the evidence lacks detail needed for a specific step, put the exact missing item in "missing_information" instead of writing vague text.
 
 TICKET: {ticket}
 SUMMARY: {summary}
@@ -217,16 +243,16 @@ MODULE: {module}
 PROBLEM: {problem}
 KEYWORDS: {keywords}
 RETRIEVED HISTORICAL TICKETS / DOCUMENTS:
-{retrieved_context[:7000]}
+{retrieved_context[:4000]}
 
 Return ONLY one valid JSON object with exactly these fields:
 {{
-  "analysis": "Explain the symptom, affected area, impact, evidence and uncertainty.",
-  "historical_evidence": "Mention relevant record codes and explain relevance. Do not invent outcomes.",
+  "analysis": "Explain the specific symptom, affected area, impact, evidence and uncertainty.",
+  "historical_evidence": "Mention the relevant record codes and explain how each relates to this ticket. Do not invent outcomes.",
   "severity": "Low, Medium, High, or Critical",
   "priority": "P1, P2, P3, or P4",
-  "likely_cause": "Most reasonable cause or investigation direction; say if unconfirmed.",
-  "suggested_resolution": "Numbered practical checks, conditional fix, and validation steps.",
+  "likely_cause": "Most probable cause for THIS ticket, naming the supporting evidence; say if unconfirmed.",
+  "suggested_resolution": "Numbered concrete steps, each with a specific target from this ticket/evidence, plus validation steps.",
   "missing_information": ["Specific information needed to confirm the cause"]
 }}
 
@@ -238,7 +264,7 @@ Choose severity and priority based on demonstrated impact, not merely because th
     # --------------------------------------------------------
 
     try:
-        response = generate_response(prompt, response_format="json")
+        response = generate_response(prompt, response_format="json", num_predict=700)
         if not isinstance(response, str) or not response.strip():
             raise RuntimeError("Ollama returned an empty analysis response.")
 

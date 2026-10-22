@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
-import { AlertCircle, Bot, Plus, RefreshCw, Search, Ticket } from "lucide-react";
+import { AlertCircle, Plus, RefreshCw, Search, Sparkles, Ticket } from "lucide-react";
 
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
@@ -152,7 +153,6 @@ export default function TicketsPage({ user }) {
         ticket?.ticket_code,
         ticket?.category,
         ticket?.module,
-        ticket?.priority,
         ticket?.severity,
         ticket?.status,
         ticket?.created_by_name,
@@ -289,7 +289,7 @@ export default function TicketsPage({ user }) {
         />
       )}
 
-      {selected && (
+      {selected && createPortal(
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setSelected(null);
         }}>
@@ -306,7 +306,6 @@ export default function TicketsPage({ user }) {
             {detailError && <div className="alert alert-warning"><AlertCircle size={16}/><span>{detailError}</span></div>}
             <div className="ticket-detail-grid">
               <div><small>Status</small><b>{String(selected.status || "ANALYZED").replaceAll("_", " ")}</b></div>
-              <div><small>Priority</small><b>{selected.priority || "—"}</b></div>
               <div><small>Severity</small><b>{selected.severity || "—"}</b></div>
               <div><small>Department</small><b>{selected.department_name || selected.department_id || "—"}</b></div>
               <div><small>Created by</small><b>{selected.created_by_name || selected.created_by || "—"}</b></div>
@@ -330,13 +329,13 @@ export default function TicketsPage({ user }) {
             )}
             <div className="modal-actions">
               <button type="button" className="button button-secondary" onClick={analyzeSelected}>
-                <Bot size={16}/> Analyze this ticket
+                <Sparkles size={16}/> Analyze this ticket
               </button>
               <button type="button" className="button button-primary" onClick={() => setSelected(null)}>Done</button>
             </div>
           </section>
         </div>
-      )}
+      , document.body)}
     </>
   );
 }

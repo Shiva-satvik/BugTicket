@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
@@ -302,7 +303,6 @@ export default function AnalyticsPage() {
   const detailFields = selectedTicket ? [
     ["Ticket ID", selectedTicket.ticket_code || selectedTicket.ticket_number || getTicketId(selectedTicket)],
     ["Status", getStatus(selectedTicket)],
-    ["Priority", selectedTicket.priority],
     ["Severity", selectedTicket.severity],
     ["Module", selectedTicket.module || selectedTicket.category],
     ["Created", selectedTicket.created_at || selectedTicket.createdAt || selectedTicket.created_on],
@@ -383,7 +383,7 @@ export default function AnalyticsPage() {
                     <span className={`stat-icon ${["violet", "blue", "amber", "green"][index]}`}><BarChart3 size={18} /></span>
                   </div>
                   <div className="stat-value">{fmt(value)}</div>
-                  <div className="stat-foot"><span className="stat-foot-dot" />Workspace total</div>
+                  <div className="stat-foot"><span className="stat-foot-dot" />All accessible tickets</div>
                 </div>
               ))}
             </div>
@@ -468,7 +468,7 @@ export default function AnalyticsPage() {
         </>
       )}
 
-      {selectedBucket && (
+      {selectedBucket && createPortal(
         <div className="analytics-ticket-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setSelectedBucket(null);
         }}>
@@ -494,9 +494,9 @@ export default function AnalyticsPage() {
             </footer>
           </section>
         </div>
-      )}
+      , document.body)}
 
-      {selectedTicket && (
+      {selectedTicket && createPortal(
         <div
           className="analytics-ticket-backdrop analytics-ticket-detail-backdrop"
           role="presentation"
@@ -573,7 +573,7 @@ export default function AnalyticsPage() {
             </footer>
           </section>
         </div>
-      )}
+      , document.body)}
     </>
   );
 }

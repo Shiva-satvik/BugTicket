@@ -19,6 +19,9 @@ OLLAMA_BASE_URL = os.getenv(
 
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "300"))
+# 0.2 was so deterministic that repeated tickets produced near-identical
+# boilerplate phrasing. 0.3 keeps JSON output stable but adds specificity.
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.3"))
 
 
 def generate_response(
@@ -52,7 +55,7 @@ def generate_response(
         "keep_alive": "10m",
         "options": {
             "num_predict": max(64, min(int(num_predict), 1800)),
-            "temperature": 0.2,
+            "temperature": OLLAMA_TEMPERATURE,
         },
     }
 

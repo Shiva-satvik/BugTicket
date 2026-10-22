@@ -1,30 +1,20 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import {
-  Activity,
-  AlertCircle,
-  ArrowUpRight,
   BarChart3,
-  Bot,
-  CheckCircle2,
   ChevronDown,
-  Clock3,
-  FileClock,
-  FilePlus2,
-  Gauge,
+  ChevronsLeft,
+  ChevronsRight,
   LayoutDashboard,
   LogOut,
   Menu,
-  Plus,
-  RefreshCw,
-  Search,
-  Settings2,
-  Sun,
   Moon,
-  ShieldCheck,
+  Search,
+  Sparkles,
+  Sun,
   Ticket,
-  UserRound,
+  UserCog,
   Users,
 } from "lucide-react";
 
@@ -38,11 +28,21 @@ import {
   safeArray,
 } from "../utils";
 
+function absolutePhotoUrl(photoUrl) {
+  if (!photoUrl) return "";
+  if (/^https?:\/\//i.test(photoUrl)) return photoUrl;
+  const base = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/+$/, "");
+  return `${base}${photoUrl.startsWith("/") ? photoUrl : `/${photoUrl}`}`;
+}
+
 /* =========================================================
    SIDEBAR
+   - Collapses to a 76px icon rail with hover tooltips
+   - Floating edge handle (always reachable, never overlaps)
+   - Becomes an overlay drawer with a scrim on mobile
 ========================================================= */
 
-export function Sidebar({ open, onNavigate, user }) {
+export function Sidebar({ open, collapsed = false, onToggleCollapse, onNavigate, user }) {
   const roleNames = [
     ...(Array.isArray(user?.roles) ? user.roles : []),
     ...(user?.role ? [user.role] : []),
@@ -51,115 +51,106 @@ export function Sidebar({ open, onNavigate, user }) {
 
   const groups = [
     {
-      label: "WORKSPACE",
+      label: "MAIN MENU",
       items: [
-        {
-          to: "/",
-          label: "Dashboard",
-          icon: LayoutDashboard,
-          end: true,
-        },
-        {
-          to: "/tickets",
-          label: "Ticket management",
-          icon: Ticket,
-        },
-        {
-          to: "/ai-analysis",
-          label: "AI ticket analysis",
-          icon: Bot,
-        },
+        { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+        { to: "/tickets", label: "Ticket management", icon: Ticket },
+        { to: "/ai-analysis", label: "AI ticket analysis", icon: Sparkles },
       ],
     },
     {
       label: "INSIGHTS",
-      items: [
-        {
-          to: "/analytics",
-          label: "Analytics & trends",
-          icon: BarChart3,
-        },
-      ],
+      items: [{ to: "/analytics", label: "Analytics & trends", icon: BarChart3 }],
     },
-    ...(isAdmin ? [{
-      label: "ADMINISTRATION",
-      items: [
-        {
-          to: "/employees",
-          label: "Employees",
-          icon: Users,
-        },
-      ],
-    }] : []),
+    ...(isAdmin
+      ? [{
+          label: "ADMINISTRATION",
+          items: [{ to: "/employees", label: "Employees", icon: Users }],
+        }]
+      : []),
   ];
 
+  const firstRole = (() => {
+    const role = Array.isArray(user?.roles) ? user.roles[0] : user?.role;
+    return typeof role === "object" ? role?.name || role?.role : role;
+  })();
+
   return (
-    <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
-      <NavLink to="/" onClick={onNavigate} className="brand-lockup">
-        <span className="brand-mark">
-          <Bot size={21} />
-        </span>
+    <>
+      {open && <div className="sidebar-scrim" onClick={onNavigate} aria-hidden="true" />}
 
-        <span>
-          bugpilot<span className="brand-dot">.</span>
-        </span>
-      </NavLink>
+      <aside
+        className={`sidebar ${open ? "sidebar-open" : ""} ${collapsed ? "sidebar-collapsed" : ""}`}
+        aria-label="Primary navigation"
+      >
+        <button
+          type="button"
+          className="sidebar-collapse-toggle"
+          onClick={onToggleCollapse}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+          title={`${collapsed ? "Expand" : "Collapse"} sidebar  (Ctrl+B)`}
+        >
+          {collapsed ? <ChevronsRight size={14} /> : <ChevronsLeft size={14} />}
+        </button>
 
-      <div className="workspace-switch">
-        <div className="workspace-icon">BP</div>
-
-        <div className="workspace-copy">
-          <b>Enterprise workspace</b>
-          <small>ERP Operations</small>
+        <div className="sidebar-brand-row">
+          <NavLink to="/" onClick={onNavigate} className="brand-lockup" title="BugPilot home">
+            <span className="brand-mark">
+              <Sparkles size={19} />
+            </span>
+            <span>
+              BugPilot<span className="brand-dot">.</span>
+            </span>
+          </NavLink>
         </div>
 
-        <ChevronDown size={15} />
-      </div>
-
-      <nav className="sidebar-nav">
-        {groups.map((group) => (
-          <div className="nav-group" key={group.label}>
-            <div className="nav-label">{group.label}</div>
-
-            {group.items.map(({ to, label, icon: Icon, end }) => (
-              <NavLink
-                end={end}
-                onClick={onNavigate}
-                key={to}
-                to={to}
-                className={({ isActive }) =>
-                  `nav-link ${isActive ? "nav-link-active" : ""}`
-                }
-              >
-                <Icon size={18} />
-
-                <span>{label}</span>
-
-                {label === "Ticket management" && (
-                  <span className="nav-arrow">›</span>
-                )}
-              </NavLink>
-            ))}
+        <div className="workspace-switch" title="ERP Operations · Support console">
+          <div className="workspace-icon">BP</div>
+          <div className="workspace-copy">
+            <b>ERP Operations</b>
+            <small>Support console</small>
           </div>
-        ))}
-      </nav>
-
-      <div className="sidebar-spacer" />
-
-      <NavLink to="/profile" onClick={onNavigate} className="sidebar-user">
-        <div className="avatar">{initials(getUserName(user))}</div>
-
-        <div className="sidebar-user-copy">
-          <b>{getUserName(user)}</b>
-
-          <small>
-            {user?.designation || user?.roles?.[0] || "Workspace member"}
-          </small>
+          <ChevronDown size={15} />
         </div>
 
-        <Settings2 size={17} />
-      </NavLink>
-    </aside>
+        <nav className="sidebar-nav">
+          {groups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <div className="nav-label">{group.label}</div>
+
+              {group.items.map(({ to, label, icon: Icon, end }) => (
+                <NavLink
+                  end={end}
+                  onClick={onNavigate}
+                  key={to}
+                  to={to}
+                  data-tip={label}
+                  aria-label={label}
+                  className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`}
+                >
+                  <Icon size={19} strokeWidth={1.9} />
+                  <span className="nav-link-label">{label}</span>
+                </NavLink>
+              ))}
+            </div>
+          ))}
+        </nav>
+
+        <div className="sidebar-spacer" />
+
+        <NavLink to="/profile" onClick={onNavigate} className="sidebar-user" title={getUserName(user)}>
+          <div className="avatar">{user?.photo_url ? <img src={absolutePhotoUrl(user.photo_url)} alt="" className="avatar-photo" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} /> : initials(getUserName(user))}</div>
+
+          <div className="sidebar-user-copy">
+            <b>{getUserName(user)}</b>
+            <small>{user?.designation || firstRole || "Team member"}</small>
+          </div>
+
+          <UserCog size={17} />
+        </NavLink>
+      </aside>
+    </>
   );
 }
 
@@ -170,6 +161,7 @@ export function Sidebar({ open, onNavigate, user }) {
 export function Topbar({ user, onMenu, onLogout, theme = "light", onToggleTheme }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
+  const searchRef = useRef(null);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -183,36 +175,56 @@ export function Topbar({ user, onMenu, onLogout, theme = "light", onToggleTheme 
     "/employees": "Employees",
   };
   const breadcrumb = breadcrumbLabels[location.pathname] || "Dashboard";
+  const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform || "");
+
+  // Ctrl/⌘ + K focuses search
+  useEffect(() => {
+    function onKeyDown(event) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+        searchRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   function submitSearch(event) {
-    if (event.key === "Enter" && searchValue.trim()) {
-      event.preventDefault();
-      navigate(`/tickets?q=${encodeURIComponent(searchValue.trim())}`);
+    event.preventDefault();
+    const query = searchValue.trim();
+    if (query) {
+      navigate(`/tickets?q=${encodeURIComponent(query)}`);
       setSearchOpen(false);
+      searchRef.current?.blur();
     }
   }
 
   return (
     <header className="topbar">
-      <button
-        className="icon-button mobile-menu"
-        aria-label="Toggle navigation"
-        onClick={onMenu}
-      >
-        <Menu size={20} />
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+        <button className="icon-button mobile-menu" aria-label="Toggle navigation" onClick={onMenu}>
+          <Menu size={20} />
+        </button>
 
-      <div className="breadcrumb">
-        <span>Workspace</span>
-        <span className="crumb-slash">/</span>
-        <b>{breadcrumb}</b>
+        <div className="breadcrumb">
+          <span className="crumb-root">BugPilot</span>
+          <span className="crumb-slash">/</span>
+          <b>{breadcrumb}</b>
+        </div>
       </div>
 
       <div className="topbar-actions">
-        <div className={`top-search ${searchOpen ? "top-search-open" : ""}`}>
-          <Search size={17} />
+        <form
+          className={`top-search ${searchOpen ? "top-search-open" : ""}`}
+          role="search"
+          aria-label="Search tickets"
+          onSubmit={submitSearch}
+        >
+          <span className="top-search-icon"><Search size={16} /></span>
 
           <input
+            ref={searchRef}
             aria-label="Search tickets"
             placeholder="Search tickets…"
             value={searchValue}
@@ -221,20 +233,35 @@ export function Topbar({ user, onMenu, onLogout, theme = "light", onToggleTheme 
               if (event.key === "Escape") {
                 setSearchValue("");
                 setSearchOpen(false);
-              } else {
-                submitSearch(event);
+                event.currentTarget.blur();
               }
             }}
             onFocus={() => setSearchOpen(true)}
+            onBlur={() => setSearchOpen(false)}
           />
 
-          <kbd>⌘ K</kbd>
-        </div>
+          {searchValue ? (
+            <button
+              type="button"
+              className="top-search-clear"
+              aria-label="Clear search"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setSearchValue("")}
+            >
+              ×
+            </button>
+          ) : (
+            <kbd>{isMac ? "⌘" : "Ctrl"} K</kbd>
+          )}
+        </form>
 
         <button
           className="icon-button search-mobile"
           aria-label="Search"
-          onClick={() => setSearchOpen((value) => !value)}
+          onClick={() => {
+            setSearchOpen((value) => !value);
+            setTimeout(() => searchRef.current?.focus(), 0);
+          }}
         >
           <Search size={19} />
         </button>
@@ -242,7 +269,7 @@ export function Topbar({ user, onMenu, onLogout, theme = "light", onToggleTheme 
         <span className="topbar-divider" />
 
         <button
-          className="icon-button"
+          className="icon-button theme-toggle"
           title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           onClick={onToggleTheme}
@@ -250,28 +277,17 @@ export function Topbar({ user, onMenu, onLogout, theme = "light", onToggleTheme 
           {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
         </button>
 
-        <div className="topbar-user">
-          <div className="avatar avatar-small">
-            {initials(getUserName(user))}
-          </div>
-
+        <NavLink to="/profile" className="topbar-user" title="Your profile">
+          <div className="avatar avatar-small">{user?.photo_url ? <img src={absolutePhotoUrl(user.photo_url)} alt="" className="avatar-photo" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} /> : initials(getUserName(user))}</div>
           <div>
             <b>{getUserName(user)}</b>
-
             <small>
-              {user?.department_id
-                ? `Department ${user.department_id}`
-                : "Signed in"}
+              {user?.department_name || (user?.department_id ? `Department ${user.department_id}` : "Signed in")}
             </small>
           </div>
-        </div>
+        </NavLink>
 
-        <button
-          className="icon-button"
-          title="Sign out"
-          aria-label="Sign out"
-          onClick={onLogout}
-        >
+        <button className="icon-button" title="Sign out" aria-label="Sign out" onClick={onLogout}>
           <LogOut size={18} />
         </button>
       </div>
@@ -288,9 +304,7 @@ export function PageHeader({ eyebrow, title, description, action }) {
     <div className="page-header">
       <div>
         <div className="eyebrow">{eyebrow}</div>
-
         <h1>{title}</h1>
-
         <p>{description}</p>
       </div>
 
@@ -303,27 +317,42 @@ export function PageHeader({ eyebrow, title, description, action }) {
    TICKET TABLE
 ========================================================= */
 
+function formatWhen(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fmt(value);
+  return date.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function TicketTable({ tickets = [], showDescription = false, onView }) {
   const ticketList = safeArray(tickets);
+
+  const head = (
+    <thead>
+      <tr>
+        <th>Ticket</th>
+        <th>Status</th>
+        <th>Severity</th>
+        <th>Updated</th>
+        {onView && <th>Action</th>}
+      </tr>
+    </thead>
+  );
 
   if (ticketList.length === 0) {
     return (
       <div className="table-scroll">
         <table className="data-table">
-          <thead>
-            <tr>
-              <th>Ticket</th>
-              <th>Status</th>
-              <th>Priority</th>
-              <th>Severity</th>
-              <th>Updated</th>
-              {onView && <th>Action</th>}
-            </tr>
-          </thead>
-
+          {head}
           <tbody>
             <tr>
-              <td colSpan={onView ? 6 : 5}>No tickets available.</td>
+              <td colSpan={onView ? 5 : 4}>No tickets available.</td>
             </tr>
           </tbody>
         </table>
@@ -334,17 +363,7 @@ export function TicketTable({ tickets = [], showDescription = false, onView }) {
   return (
     <div className="table-scroll">
       <table className="data-table">
-        <thead>
-          <tr>
-            <th>Ticket</th>
-            <th>Status</th>
-            <th>Priority</th>
-            <th>Severity</th>
-            <th>Updated</th>
-            {onView && <th>Action</th>}
-          </tr>
-        </thead>
-
+        {head}
         <tbody>
           {ticketList.map((ticket, index) => {
             const id = getTicketId(ticket);
@@ -353,31 +372,16 @@ export function TicketTable({ tickets = [], showDescription = false, onView }) {
               <tr key={id === "—" ? index : id}>
                 <td>
                   <div className="ticket-cell">
-                    <span className="ticket-id">
-                      {ticket.ticket_code || `#${id}`}
-                    </span>
-
+                    <span className="ticket-id">{ticket.ticket_code || `#${id}`}</span>
                     <b>{getTicketTitle(ticket)}</b>
-
-                    {showDescription && ticket.description && (
-                      <small>{ticket.description}</small>
-                    )}
+                    {showDescription && ticket.description && <small>{ticket.description}</small>}
                   </div>
                 </td>
 
-                <td>
-                  <StatusBadge status={getStatus(ticket)} />
-                </td>
+                <td><StatusBadge status={getStatus(ticket)} /></td>
+                  <td style={{ textTransform: "capitalize" }}>{String(fmt(ticket.severity)).toLowerCase()}</td>
+                <td className="muted-cell">{formatWhen(ticket.updated_at || ticket.created_at)}</td>
 
-                <td>
-                  <PriorityBadge value={ticket.priority} />
-                </td>
-
-                <td>{fmt(ticket.severity)}</td>
-
-                <td className="muted-cell">
-                  {fmt(ticket.updated_at || ticket.created_at)}
-                </td>
                 {onView && (
                   <td>
                     <button type="button" className="table-action" onClick={() => onView(ticket)}>
@@ -400,7 +404,6 @@ export function TicketTable({ tickets = [], showDescription = false, onView }) {
 
 export function StatusBadge({ status }) {
   const key = String(status || "OPEN").toLowerCase();
-
   const label = key.replaceAll("_", " ");
 
   const cls = ["resolved", "closed", "done"].includes(key)
@@ -420,25 +423,6 @@ export function StatusBadge({ status }) {
 }
 
 /* =========================================================
-   PRIORITY BADGE
-========================================================= */
-
-export function PriorityBadge({ value }) {
-  const priority = String(value || "MEDIUM").toLowerCase();
-
-  const cls =
-    priority === "urgent" || priority === "critical" || priority === "high"
-      ? "priority-high"
-      : priority === "low"
-        ? "priority-low"
-        : "priority-medium";
-
-  return (
-    <span className={`priority-badge ${cls}`}>{fmt(value || "MEDIUM")}</span>
-  );
-}
-
-/* =========================================================
    EMPTY STATE
 ========================================================= */
 
@@ -446,11 +430,8 @@ export function EmptyState({ icon: Icon, title, body, action }) {
   return (
     <div className="empty-state">
       <div className="empty-icon">{Icon && <Icon size={22} />}</div>
-
       <h3>{title}</h3>
-
       <p>{body}</p>
-
       {action}
     </div>
   );
@@ -464,7 +445,6 @@ export function LoadingPanel({ label = "Loading..." }) {
   return (
     <div className="loading-panel">
       <span className="spinner spinner-dark" />
-
       <span>{label}</span>
     </div>
   );
@@ -476,14 +456,11 @@ export function LoadingPanel({ label = "Loading..." }) {
 
 export function ResultBlock({ title, body }) {
   const content =
-    typeof body === "string" && body.trim()
-      ? body
-      : "No information returned for this field.";
+    typeof body === "string" && body.trim() ? body : "No information returned for this field.";
 
   return (
     <div className="result-block">
       <h3>{title}</h3>
-
       <p>{content}</p>
     </div>
   );

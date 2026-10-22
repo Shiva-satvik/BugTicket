@@ -21,6 +21,8 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+let isRedirectingToLogin = false;
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -28,9 +30,17 @@ api.interceptors.response.use(
       const url = String(error?.config?.url || "");
 
       if (!url.includes("/auth/login")) {
+        // Expired or invalid session: clear stored credentials and
+        // force a reload so App.jsx renders the login page instead
+        // of leaving the UI stuck with failing 401 API calls.
         localStorage.removeItem("bugpilot_token");
         localStorage.removeItem("bugpilot_access_token");
         localStorage.removeItem("bugpilot_user");
+
+        if (!isRedirectingToLogin) {
+          isRedirectingToLogin = true;
+          window.location.reload();
+        }
       }
     }
 

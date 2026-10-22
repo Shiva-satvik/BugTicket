@@ -27,7 +27,11 @@ export const authService = {
 export const authApi = authService;
 
 export const ticketService = {
-  analyze: (ticket) => api.post("/api/tickets/analyze", { ticket }),
+  // The AI pipeline makes 3 sequential LLM calls on the backend and can
+  // legitimately take longer than the global 5-minute axios timeout,
+  // so this endpoint gets its own extended limit (15 minutes).
+  analyze: (ticket) =>
+    api.post("/api/tickets/analyze", { ticket }, { timeout: 900000 }),
   getAll: (params = {}) => api.get("/api/tickets", { params }),
   getById: (ticketId) => api.get(`/api/tickets/${ticketId}`),
 };

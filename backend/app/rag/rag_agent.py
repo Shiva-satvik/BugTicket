@@ -32,11 +32,11 @@ and one short sentence explaining why it is relevant.
 
 Likely Cause
 Explain the likely cause based only on the retrieved historical tickets.
-If there are multiple possible causes, list them briefly.
+If there are multiple possible causes, list them in detail
 
 Suggested Resolution
 Provide the recommended resolution based on what was done in similar
-historical tickets. Use short numbered steps.
+historical tickets. Give detailed summary 
 
 Missing Information
 List only the information that is actually needed for further

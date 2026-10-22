@@ -5,8 +5,8 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  UserCheck,
   Users,
-  UserRoundCheck,
 } from "lucide-react";
 
 import { adminService, errorMessage } from "../api/services";
@@ -19,9 +19,11 @@ function normalize(value) {
 
 function getRoles(entry) {
   if (Array.isArray(entry?.roles)) {
-    return entry.roles.map((role) =>
-      typeof role === "object" ? role.name || role.role || "" : role
-    ).filter(Boolean).join(", ");
+    const names = entry.roles
+      .map((role) => (typeof role === "object" ? role.name || role.role || "" : role))
+      .filter(Boolean)
+      .join(", ");
+    return names || "Unassigned";
   }
   return entry?.role || "Unassigned";
 }
@@ -111,15 +113,15 @@ function EmployeesPage() {
       {!loading && !error && (
         <section className="employees-summary-grid">
           <article className="employees-summary-card">
-            <span className="employees-summary-icon employees-summary-icon-teal"><Users size={18} /></span>
+            <span className="employees-summary-icon employees-summary-icon-teal"><Users size={20} /></span>
             <div><span>Total employees</span><strong>{employees.length.toLocaleString()}</strong><small>Accounts in directory</small></div>
           </article>
           <article className="employees-summary-card">
-            <span className="employees-summary-icon employees-summary-icon-green"><UserRoundCheck size={18} /></span>
+            <span className="employees-summary-icon employees-summary-icon-green"><UserCheck size={20} /></span>
             <div><span>Active accounts</span><strong>{activeCount.toLocaleString()}</strong><small>{employees.length ? Math.round(activeCount / employees.length * 100) : 0}% of directory</small></div>
           </article>
           <article className="employees-summary-card">
-            <span className="employees-summary-icon employees-summary-icon-blue"><Building2 size={18} /></span>
+            <span className="employees-summary-icon employees-summary-icon-blue"><Building2 size={20} /></span>
             <div><span>Departments</span><strong>{departmentCount.toLocaleString()}</strong><small>Represented in directory</small></div>
           </article>
         </section>
@@ -128,7 +130,7 @@ function EmployeesPage() {
       <section className="panel employees-directory-panel">
         <div className="employees-directory-heading">
           <div>
-            <span className="eyebrow">WORKSPACE DIRECTORY</span>
+            <span className="eyebrow">EMPLOYEE DIRECTORY</span>
             <h2>Employee accounts</h2>
             <p>Search employees by name, email, employee ID, department, or role.</p>
           </div>
@@ -169,34 +171,50 @@ function EmployeesPage() {
           <div className="table-scroll employees-table-scroll">
             <table className="data-table employees-table">
               <thead>
-                <tr><th>Employee</th><th>Department</th><th>Role(s)</th><th>Status</th><th>Last login</th></tr>
+                <tr>
+                  <th>Employee</th>
+                  <th>Employee ID</th>
+                  <th>Email</th>
+                  <th>Department</th>
+                  <th>Role(s)</th>
+                  <th>Status</th>
+                </tr>
               </thead>
               <tbody>
                 {filteredEmployees.map((entry, index) => {
                   const active = Boolean(entry.is_active);
+                  const displayName = entry.full_name || entry.username || "Unnamed employee";
                   return (
                     <tr key={entry.employee_id || entry.id || entry.username || index}>
                       <td>
                         <div className="employees-person">
                           <span className="employees-avatar">
-                            {String(entry.full_name || entry.username || "?").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}
+                            {String(displayName).split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}
                           </span>
                           <span className="employees-person-copy">
-                            <strong>{entry.full_name || entry.username || "Unnamed employee"}</strong>
-                            <small>{entry.email || entry.username || "No email available"}</small>
-                            <small className="employees-id">{entry.employee_id || "Employee ID unavailable"}</small>
+                            <strong>{displayName}</strong>
+                            {entry.username && entry.full_name && <small>@{entry.username}</small>}
                           </span>
                         </div>
+                      </td>
+                      <td>
+                        {entry.employee_id
+                          ? <span className="employees-id">{entry.employee_id}</span>
+                          : <span className="muted-cell">—</span>}
+                      </td>
+                      <td className="employees-email">
+                        {entry.email
+                          ? <a href={`mailto:${entry.email}`}>{entry.email}</a>
+                          : <span className="muted-cell">—</span>}
                       </td>
                       <td>{entry.department_name || entry.department_id || "—"}</td>
                       <td><span className="employees-role">{getRoles(entry)}</span></td>
                       <td><span className={`employees-status ${active ? "is-active" : "is-inactive"}`}><span />{active ? "Active" : "Inactive"}</span></td>
-                      <td className="employees-last-login">{entry.last_login_at ? new Date(entry.last_login_at).toLocaleString() : "Never"}</td>
                     </tr>
                   );
                 })}
                 {!filteredEmployees.length && (
-                  <tr><td colSpan={5}>
+                  <tr><td colSpan={6}>
                     <EmptyState icon={ShieldCheck} title="No employees found" body="Try changing the search term or clearing the selected filters." />
                   </td></tr>
                 )}

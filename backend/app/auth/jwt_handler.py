@@ -9,7 +9,7 @@ load_dotenv()
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hours; reduces mid-session 401s during development/demos.
 
 
 def _get_secret_key() -> str:

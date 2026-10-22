@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.bugpilot_graph import bugpilot_graph
@@ -126,6 +127,11 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(enterprise_ticket_router)
 app.include_router(analytics_router)
+
+# Serve saved profile photos. Files are written by the authenticated profile-photo endpoints.
+PROFILE_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
+os.makedirs(PROFILE_UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=PROFILE_UPLOAD_DIR), name="uploads")
 
 
 # --------------------------------------------------

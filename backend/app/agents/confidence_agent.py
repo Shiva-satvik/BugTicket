@@ -490,7 +490,7 @@ Category:
 HISTORICAL EVIDENCE
 ============================================================
 
-{retrieved_context}
+{retrieved_context[:4000]}
 
 ============================================================
 BUGPILOT ANALYSIS
@@ -558,8 +558,8 @@ Do NOT simply say:
 
 Explain WHY the available evidence is useful.
 
-Keep it detailed enough to be meaningful, approximately
-2-4 paragraphs.
+Keep it concise and meaningful: one short paragraph of
+3-5 sentences (roughly 80-120 words).
 
 Return ONLY valid JSON.
 
@@ -578,7 +578,7 @@ Do not add anything outside the JSON.
     # ========================================================
 
     try:
-        response = generate_response(prompt)
+        response = generate_response(prompt, num_predict=220)
     except Exception as error:
         diagnostics = state.get("retrieval_diagnostics", {}) or {}
         ticket_count = int(diagnostics.get("ticket_count", 0) or 0)

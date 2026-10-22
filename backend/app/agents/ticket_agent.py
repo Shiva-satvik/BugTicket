@@ -139,7 +139,7 @@ Required JSON structure:
         response = generate_response(
             prompt,
             response_format="json",
-            num_predict=350,
+            num_predict=300,
         )
 
         if not response:

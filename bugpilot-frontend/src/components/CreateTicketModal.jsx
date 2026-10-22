@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { AlertCircle, CheckCircle2, Plus, X } from "lucide-react";
 import { enterpriseTicketApi, errorMessage } from "../api/services";
 
@@ -63,7 +64,7 @@ export default function CreateTicketModal({ user, onClose, onCreated }) {
     }
   }
 
-  return (
+  return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !busy) onClose?.();
     }}>
@@ -131,6 +132,7 @@ export default function CreateTicketModal({ user, onClose, onCreated }) {
           </div>
         </form>
       </section>
-    </div>
+    </div>,
+    document.body
   );
 }

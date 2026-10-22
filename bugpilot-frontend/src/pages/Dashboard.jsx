@@ -4,15 +4,13 @@ import {
   AlertCircle,
   ArrowUpRight,
   BarChart3,
-  Bot,
+  Sparkles,
   CheckCircle2,
   Clock3,
   FileClock,
   FilePlus2,
-  Gauge,
   Plus,
   RefreshCw,
-  ShieldCheck,
   Ticket,
 } from "lucide-react";
 
@@ -101,7 +99,6 @@ export default function Dashboard({ user }) {
   const [stats, setStats] = useState({});
   const [timeline, setTimeline] = useState([]);
   const [tickets, setTickets] = useState([]);
-  const [scope, setScope] = useState("");
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
   // Normalize role values safely; the API may return roles as strings or objects.
@@ -142,7 +139,6 @@ export default function Dashboard({ user }) {
         const data = objectOrEmpty(results[0].value.data);
 
         setStats(objectOrEmpty(data.statistics));
-        setScope(data.scope || "");
       } else {
         setError(
           errorMessage(
@@ -237,9 +233,9 @@ export default function Dashboard({ user }) {
   return (
     <>
       <PageHeader
-        eyebrow="YOUR WORKSPACE"
+        eyebrow="OVERVIEW"
         title={`Good to see you, ${firstName(getUserName(user))}.`}
-        description="Here’s what’s happening across your support workspace."
+        description="Here’s the latest across your support team."
         action={
           <button
             className="button button-secondary"
@@ -261,29 +257,9 @@ export default function Dashboard({ user }) {
       )}
 
       {loading ? (
-        <LoadingPanel label="Loading your workspace…" />
+        <LoadingPanel label="Loading ticket activity…" />
       ) : (
         <>
-          {/* Workspace summary */}
-          <div className="welcome-strip">
-            <div className="welcome-symbol">
-              <Gauge size={22} />
-            </div>
-
-            <div>
-              <b>Your workspace at a glance</b>
-              <p>
-                Analytics are scoped according to your assigned role and
-                department.
-              </p>
-            </div>
-
-            <span className="scope-pill">
-              <ShieldCheck size={14} />
-              {scope || "Authorized view"}
-            </span>
-          </div>
-
           {/* Statistics */}
           <div className="stat-grid">
             {cards.map(({ label, value, icon: Icon, tone, foot }) => {
@@ -420,7 +396,7 @@ export default function Dashboard({ user }) {
 
                 <NavLink to="/ai-analysis" className="quick-action">
                   <span className="quick-action-icon blue">
-                    <Bot size={19} />
+                    <Sparkles size={19} />
                   </span>
 
                   <span>
