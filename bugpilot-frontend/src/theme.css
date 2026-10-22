@@ -1909,3 +1909,40 @@ body:has(.analytics-ticket-backdrop) { overflow: hidden; }
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- AI analysis — suggested resolution steps ---------------------- */
+/* Rendered in the AI result modal; mirrors the numbered bullets in the PDF.  */
+
+.resolution-steps {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.resolution-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.resolution-steps .resolution-step-id {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  padding: 2px 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 6px;
+}
+
+.resolution-steps li > span:last-child {
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

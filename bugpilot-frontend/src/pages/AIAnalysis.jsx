@@ -7,7 +7,7 @@ import { jsPDF } from "jspdf";
 
 import { ticketApi, errorMessage } from "../api/services";
 
-import { objectOrEmpty, safeArray, fmt } from "../utils";
+import { objectOrEmpty, safeArray, fmt, parseResolutionSteps } from "../utils";
 
 import { PageHeader, ResultBlock } from "../components/Common.jsx";
 
@@ -25,60 +25,319 @@ export default function AIAnalysisPage() {
     }
   }, [location.state]);
 
-  function downloadReport() {
+  async function downloadReport() {
     if (!result) return;
     const pdf = new jsPDF({ unit: "pt", format: "a4" });
-    const margin = 44;
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const maxWidth = pageWidth - margin * 2;
-    let y = 48;
 
-    const addText = (text, size = 10, bold = false, gap = 7) => {
-      pdf.setFont("helvetica", bold ? "bold" : "normal");
-      pdf.setFontSize(size);
-      const lines = pdf.splitTextToSize(String(text ?? "—"), maxWidth);
-      const lineHeight = size * 1.45;
-      if (y + lines.length * lineHeight > pageHeight - margin) {
-        pdf.addPage();
-        y = margin;
-      }
-      pdf.text(lines, margin, y);
-      y += lines.length * lineHeight + gap;
+    /* BugPilot design tokens — mirrors the light theme in src/theme.css */
+    const C = {
+      navy: "#2f4ac0",       // --accent-hover — header & footer bands
+      accent: "#3b5bdb",     // --accent
+      accentSoft: "#edf1ff", // --accent-soft
+      ink: "#111827",        // --text
+      text2: "#444c5e",      // --text-2
+      muted: "#6f778a",      // --muted
+      border: "#e2e5ec",     // --border
+      track: "#eceef3",      // --surface-3
+      danger: "#c92a2a", dangerSoft: "#fdeaea",
+      warning: "#a86400", warningSoft: "#fdf1d8",
+      success: "#12805c", successSoft: "#e4f6ee",
+      info: "#1c7ed6", infoSoft: "#e7f3fd",
+      white: "#ffffff",
     };
 
-    addText("BugPilot — AI Analysis Report", 18, true, 12);
-    addText(`Generated: ${new Date().toLocaleString()}`, 9, false, 12);
-    addText("Reported issue", 12, true, 4);
-    addText(ticket, 10);
-    addText("Summary", 12, true, 4);
-    addText(result.summary || result.problem || "Ticket analysis completed.");
-    addText("Severity", 12, true, 4);
-    addText(fmt(result.severity), 10);
-    addText("Confidence", 12, true, 4);
-    addText(result.confidence_score === undefined ? "Not available" : `${Math.round(Number(result.confidence_score) <= 1 ? Number(result.confidence_score) * 100 : Number(result.confidence_score))}%`);
-    addText("Category & module", 12, true, 4);
-    addText([result.category, result.module].filter(Boolean).join(" · ") || "Not specified");
-    addText("Ticket understanding", 12, true, 4);
-    addText(result.problem || result.ticket || ticket);
-    addText("Detailed analysis", 12, true, 4);
-    addText(result.analysis || "Not available");
-    addText("Historical evidence used by RAG", 12, true, 4);
-    addText(result.historical_evidence || "No historical evidence was returned.");
-    addText("Likely cause", 12, true, 4);
-    addText(result.likely_cause || "Not specified");
-    addText("Suggested resolution", 12, true, 4);
-    addText(result.suggested_resolution || "Not specified");
-    addText(`Confidence check — ${result.confidence_level || "Unrated"}`, 12, true, 4);
-    addText(result.confidence_reason || "Not specified");
+    // Load the app's UI font (Inter) so the report matches the product theme.
+    // Falls back to the built-in Helvetica when the font files can't be fetched.
+    async function loadFont(url, fileKey, style) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) return false;
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        pdf.addFileToVFS(fileKey, btoa(binary));
+        pdf.addFont(fileKey, "Inter", style);
+        return true;
+      } catch {
+        return false; // graceful fallback to Helvetica
+      }
+    }
+
+    const hasRegular = await loadFont("https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-400-normal.ttf", "Inter-Regular.ttf", "normal");
+    const hasBold = await loadFont("https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-700-normal.ttf", "Inter-Bold.ttf", "bold");
+    const BODY = hasRegular ? "Inter" : "helvetica";
+    const BOLD = hasBold ? "Inter" : "helvetica";
+    const MONO = "courier"; // built-in mono for ticket/document codes (matches --mono usage)
+
+    const margin = 46;
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const contentWidth = pageWidth - margin * 2;
+    const footerH = 30;
+    const maxY = pageHeight - footerH - 24;
+    let y = 0;
+
+    const set = (family, style, size, color) => {
+      pdf.setFont(family, style);
+      pdf.setFontSize(size);
+      pdf.setTextColor(color);
+    };
+
+    const newPage = () => {
+      pdf.addPage();
+      pdf.setFillColor(C.accent);
+      pdf.rect(0, 0, pageWidth, 2.5, "F");
+      y = 44;
+    };
+
+    const ensure = (height) => {
+      if (y + height > maxY) newPage();
+    };
+
+    const chip = (text, fg, bg, x, top) => {
+      set(BOLD, "bold", 8.5, fg);
+      const w = pdf.getTextWidth(text) + 18;
+      pdf.setFillColor(bg);
+      pdf.roundedRect(x, top, w, 16, 8, 8, "F");
+      pdf.text(text, x + w / 2, top + 11, { align: "center" });
+      return w;
+    };
+
+    const severityStyle = (value) => {
+      const key = String(value || "").toLowerCase();
+      if (["critical", "high"].includes(key)) return { fg: C.danger, bg: C.dangerSoft };
+      if (key === "medium") return { fg: C.warning, bg: C.warningSoft };
+      if (key === "low") return { fg: C.success, bg: C.successSoft };
+      return { fg: C.info, bg: C.infoSoft };
+    };
+
+    const confidenceStyle = (value) => {
+      const key = String(value || "").toLowerCase();
+      if (key === "high") return { fg: C.success, bg: C.successSoft };
+      if (key === "medium") return { fg: C.info, bg: C.infoSoft };
+      return { fg: C.warning, bg: C.warningSoft };
+    };
+
+    const heading = (text, badge) => {
+      ensure(90); // keep headings together with at least some following content
+      y += 8;
+      set(BOLD, "bold", 12.5, C.navy);
+      pdf.text(text, margin, y + 9);
+      if (badge) {
+        const textWidth = pdf.getTextWidth(text);
+        chip(badge.text, badge.fg, badge.bg, margin + textWidth + 10, y);
+      }
+      pdf.setDrawColor(C.border);
+      pdf.setLineWidth(0.75);
+      pdf.line(margin, y + 16, pageWidth - margin, y + 16);
+      pdf.setFillColor(C.accent);
+      pdf.rect(margin, y + 14.6, 24, 2.8, "F");
+      y += 30;
+    };
+
+    const paragraph = (text, { size = 10, color = C.text2 } = {}) => {
+      set(BODY, "normal", size, color);
+      const rows = pdf.splitTextToSize(String(text ?? "—"), contentWidth);
+      const lineHeight = size * 1.55;
+      ensure(rows.length * lineHeight + 8);
+      for (const row of rows) {
+        if (y + lineHeight > maxY) newPage();
+        pdf.text(row, margin, y + size);
+        y += lineHeight;
+      }
+      y += 8;
+    };
+
+    const callout = (text) => {
+      set(BODY, "normal", 10, C.ink);
+      const rows = pdf.splitTextToSize(String(text ?? "—"), contentWidth - 30);
+      const lineHeight = 10 * 1.55;
+      const height = rows.length * lineHeight + 20;
+      ensure(height + 8);
+      pdf.setFillColor(C.accentSoft);
+      pdf.roundedRect(margin, y, contentWidth, height, 6, 6, "F");
+      pdf.setFillColor(C.accent);
+      pdf.rect(margin, y + 7, 3, height - 14, "F");
+      rows.forEach((row, index) => pdf.text(row, margin + 16, y + 18 + index * lineHeight));
+      y += height + 16;
+    };
+
+    const metaCards = () => {
+      const gap = 10;
+      const cardW = (contentWidth - gap * 2) / 3;
+      const cardH = 62;
+      ensure(cardH + 8);
+      const top = y;
+      const cards = [
+        {
+          label: "SEVERITY",
+          render: (x) => {
+            const value = fmt(result.severity) === "—" ? "Not rated" : fmt(result.severity);
+            const style = severityStyle(value);
+            chip(value, style.fg, style.bg, x + 12, top + 28);
+          },
+        },
+        {
+          label: "CONFIDENCE",
+          render: (x) => {
+            const score = result.confidence_score;
+            const pct = score === undefined ? null : Math.round(Number(score) <= 1 ? Number(score) * 100 : Number(score));
+            set(BOLD, "bold", 14, C.navy);
+            pdf.text(pct === null ? "—" : `${pct}%`, x + 12, top + 41);
+            if (pct !== null) {
+              const trackW = cardW - 24;
+              pdf.setFillColor(C.track);
+              pdf.roundedRect(x + 12, top + 47, trackW, 4.5, 2.25, 2.25, "F");
+              pdf.setFillColor(C.accent);
+              pdf.roundedRect(x + 12, top + 47, Math.max((trackW * Math.min(pct, 100)) / 100, 4.5), 4.5, 2.25, 2.25, "F");
+            }
+          },
+        },
+        {
+          label: "CATEGORY & MODULE",
+          render: (x) => {
+            const value = [result.category, result.module].filter(Boolean).join(" · ") || "Not specified";
+            set(BODY, "normal", 8.5, C.text2);
+            const rows = pdf.splitTextToSize(value, cardW - 24);
+            rows.slice(0, 2).forEach((row, index) => pdf.text(row, x + 12, top + 33 + index * 11));
+          },
+        },
+      ];
+      cards.forEach((card, index) => {
+        const x = margin + index * (cardW + gap);
+        pdf.setFillColor(C.white);
+        pdf.setDrawColor(C.border);
+        pdf.setLineWidth(0.75);
+        pdf.roundedRect(x, top, cardW, cardH, 6, 6, "FD");
+        set(BODY, "normal", 7, C.muted);
+        pdf.text(card.label, x + 12, top + 16, { charSpace: 0.6 });
+        card.render(x);
+      });
+      y = top + cardH + 16;
+    };
+
+    const sourceList = (items, emptyText, mapItem) => {
+      if (!items.length) {
+        paragraph(emptyText, { size: 9.5, color: C.muted });
+        return;
+      }
+      for (const item of items) {
+        const { code, rest } = mapItem(item);
+        set(MONO, "bold", 9, C.accent);
+        const codeWidth = pdf.getTextWidth(code);
+        const restX = margin + 12 + codeWidth + 8;
+        set(BODY, "normal", 9.5, C.text2);
+        const rows = pdf.splitTextToSize(rest, pageWidth - margin - restX);
+        const lineHeight = 13;
+        ensure(rows.length * lineHeight + 6);
+        pdf.setFillColor(C.accent);
+        pdf.rect(margin + 1, y + 4, 3.5, 3.5, "F");
+        set(MONO, "bold", 9, C.accent);
+        pdf.text(code, margin + 12, y + 10);
+        set(BODY, "normal", 9.5, C.text2);
+        rows.forEach((row, index) => pdf.text(row, restX, y + 10 + index * lineHeight));
+        y += rows.length * lineHeight + 7;
+      }
+      y += 4;
+    };
+
+    /* ---- Page 1 header band ---- */
+    const headerH = 96;
+    pdf.setFillColor(C.navy);
+    pdf.rect(0, 0, pageWidth, headerH, "F");
+    pdf.setFillColor(C.accent);
+    pdf.rect(0, headerH, pageWidth, 3, "F");
+    set(MONO, "bold", 8, C.accentSoft);
+    pdf.text("BUGPILOT · AI TRIAGE", margin, 30, { charSpace: 1.4 });
+    set(BOLD, "bold", 20, C.white);
+    pdf.text("AI Analysis Report", margin, 58);
+    set(BODY, "normal", 8.5, C.accentSoft);
+    pdf.text(`Generated: ${new Date().toLocaleString()}`, margin, 78);
+    y = headerH + 27;
+
+    /* ---- Report body (section order preserved) ---- */
+    heading("Reported issue");
+    callout(ticket);
+    heading("Summary");
+    paragraph(result.summary || result.problem || "Ticket analysis completed.");
+    metaCards();
+    heading("Ticket understanding");
+    paragraph(result.problem || result.ticket || ticket);
+    heading("Detailed analysis");
+    paragraph(result.analysis || "Not available");
+    heading("Historical evidence");
+    paragraph(result.historical_evidence || "No historical evidence was returned.");
+    heading("Likely cause");
+    paragraph(result.likely_cause || "Not specified");
+
+    ensure(120); // heading + first numbered step stay on the same page
+    heading("Suggested resolution");
+    const resolutionSteps = parseResolutionSteps(result.suggested_resolution);
+    if (!resolutionSteps.length) {
+      paragraph(result.suggested_resolution || "Not specified");
+    } else {
+      for (const step of resolutionSteps) {
+        set(BODY, "normal", 10, C.ink);
+        const numW = 30;
+        const rows = pdf.splitTextToSize(step.body, contentWidth - numW);
+        const lineHeight = 10 * 1.55;
+        const height = Math.max(rows.length * lineHeight, 18);
+        ensure(height + 10);
+        pdf.setFillColor(C.accentSoft);
+        pdf.roundedRect(margin, y, 26, 15, 4.5, 4.5, "F");
+        set(BOLD, "bold", 8.5, C.navy);
+        pdf.text(step.step, margin + 13, y + 10.5, { align: "center" });
+        set(BODY, "normal", 10, C.ink);
+        rows.forEach((row, index) => pdf.text(row, margin + numW, y + 10 + index * lineHeight));
+        y += height + 9;
+      }
+      y += 6;
+    }
+
+    const levelBadge = result.confidence_level
+      ? { text: String(result.confidence_level).toUpperCase(), ...confidenceStyle(result.confidence_level) }
+      : undefined;
+    heading("Confidence check", levelBadge);
+    paragraph(result.confidence_reason || "Not specified");
+
     const ticketSources = result.retrieval_diagnostics?.ticket_sources || [];
     const documentSources = result.retrieval_diagnostics?.financial_document_sources || [];
-    addText("Retrieved historical tickets", 12, true, 4);
-    addText(ticketSources.length ? ticketSources.map((item) => `${item.ticket_code || "Ticket"} — ${item.module || "Module unknown"} — ${item.category || "Category unknown"}`).join("\n") : "No historical tickets retrieved.");
-    addText("Retrieved financial documents", 12, true, 4);
-    addText(documentSources.length ? documentSources.map((item) => `${item.document_code || "Document"} — ${item.title || "Untitled"} — ${item.module || "Module unknown"}`).join("\n") : "No financial documents retrieved.");
-    addText("Retrieval diagnostics", 12, true, 4);
-    addText(`Keyword: ${result.retrieval_diagnostics?.keyword_search || "unknown"}; Semantic: ${result.retrieval_diagnostics?.semantic_search || "unknown"}; Financial documents: ${result.retrieval_diagnostics?.financial_document_search || "unknown"}`);
+    heading("Retrieved historical tickets");
+    sourceList(
+      ticketSources,
+      "No historical tickets were retrieved for this query.",
+      (item) => ({
+        code: item.ticket_code || "Ticket",
+        rest: `${item.module || "Module unknown"} — ${item.category || "Category unknown"}`,
+      }),
+    );
+    heading("Retrieved financial documents");
+    sourceList(
+      documentSources,
+      "No financial documents were retrieved for this query.",
+      (item) => ({
+        code: item.document_code || "Document",
+        rest: `${item.title || "Untitled"} — ${item.module || "Module unknown"}`,
+      }),
+    );
+
+    /* ---- Navy footer bar on every page ---- */
+    const totalPages = pdf.getNumberOfPages();
+    for (let page = 1; page <= totalPages; page += 1) {
+      pdf.setPage(page);
+      const top = pageHeight - footerH;
+      pdf.setFillColor(C.navy);
+      pdf.rect(0, top, pageWidth, footerH, "F");
+      pdf.setFillColor(C.accent);
+      pdf.rect(0, top - 3, pageWidth, 3, "F");
+      set(BODY, "normal", 7.5, C.white);
+      pdf.text("BugPilot — AI Analysis Report", margin, top + footerH / 2 + 2.5);
+      pdf.text(`Page ${page} of ${totalPages}`, pageWidth - margin, top + footerH / 2 + 2.5, { align: "right" });
+    }
+
     const safeName = String(result.summary || "bugpilot-ai-analysis").replace(/[^a-z0-9-_]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "bugpilot-ai-analysis";
     pdf.save(`${safeName}.pdf`);
   }
@@ -219,9 +478,27 @@ export default function AIAnalysisPage() {
             <ResultBlock title="Category & module" body={[result.category, result.module].filter(Boolean).join(" · ") || "Not specified"} />
             <ResultBlock title="Ticket understanding" body={result.problem || result.ticket || ticket} />
             <ResultBlock title="Detailed analysis" body={result.analysis} />
-            <ResultBlock title="Historical evidence used by RAG" body={result.historical_evidence} />
+            <ResultBlock title="Historical evidence" body={result.historical_evidence} />
             <ResultBlock title="Likely cause" body={result.likely_cause} />
-            <ResultBlock title="Suggested resolution" body={result.suggested_resolution} />
+            <section className="result-block">
+              <h3>Suggested resolution</h3>
+              {(() => {
+                const steps = parseResolutionSteps(result.suggested_resolution);
+                if (!steps.length) {
+                  return <p>{result.suggested_resolution || "No information returned for this field."}</p>;
+                }
+                return (
+                  <ul className="resolution-steps">
+                    {steps.map((item) => (
+                      <li key={item.step}>
+                        <span className="resolution-step-id">{item.step}</span>
+                        <span>{item.body}</span>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
+            </section>
             <ResultBlock title={`Confidence check · ${result.confidence_level || "Unrated"}`} body={result.confidence_reason} />
             <section className="result-block evidence-sources">
               <h3>Retrieved sources</h3>
@@ -229,11 +506,14 @@ export default function AIAnalysisPage() {
               {result.retrieval_diagnostics?.ticket_sources?.length ? <ul>{result.retrieval_diagnostics.ticket_sources.map((item) => <li key={item.ticket_code}><b>{item.ticket_code}</b> · {item.module || "Module unknown"} · {item.category || "Category unknown"} <small>({(item.retrieved_by || []).join(" + ") || "retrieval source unknown"})</small></li>)}</ul> : <p>No historical tickets were retrieved for this query.</p>}
               <h4>Financial SOPs / policies</h4>
               {result.retrieval_diagnostics?.financial_document_sources?.length ? <ul>{result.retrieval_diagnostics.financial_document_sources.map((item) => <li key={item.document_code}><b>{item.document_code}</b> · {item.title} · {item.module || "Module unknown"}</li>)}</ul> : <p>No financial documents were retrieved for this query.</p>}
-              <h4>Retrieval diagnostics</h4>
-              <p>Keyword: {result.retrieval_diagnostics?.keyword_search || "unknown"} · Semantic: {result.retrieval_diagnostics?.semantic_search || "unknown"} · Financial documents: {result.retrieval_diagnostics?.financial_document_search || "unknown"}</p>
-              {result.retrieval_diagnostics?.semantic_error && <p>Semantic retrieval error: {result.retrieval_diagnostics.semantic_error}</p>}
-              {result.retrieval_diagnostics?.keyword_error && <p>Keyword retrieval error: {result.retrieval_diagnostics.keyword_error}</p>}
-              {result.retrieval_diagnostics?.financial_document_error && <p>Document retrieval error: {result.retrieval_diagnostics.financial_document_error}</p>}
+              {(result.retrieval_diagnostics?.semantic_error || result.retrieval_diagnostics?.keyword_error || result.retrieval_diagnostics?.financial_document_error) && (
+                <>
+                  <h4>Retrieval diagnostics</h4>
+                  {result.retrieval_diagnostics?.semantic_error && <p>Semantic retrieval error: {result.retrieval_diagnostics.semantic_error}</p>}
+                  {result.retrieval_diagnostics?.keyword_error && <p>Keyword retrieval error: {result.retrieval_diagnostics.keyword_error}</p>}
+                  {result.retrieval_diagnostics?.financial_document_error && <p>Document retrieval error: {result.retrieval_diagnostics.financial_document_error}</p>}
+                </>
+              )}
             </section>
             {result.missing_information?.length > 0 && <ResultBlock title="Information to collect" body={safeArray(result.missing_information).join(" · ")} />}
             <div className="modal-actions">

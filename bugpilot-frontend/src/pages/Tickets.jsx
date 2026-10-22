@@ -8,7 +8,7 @@ import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { enterpriseTicketApi, errorMessage, ticketApi } from "../api/services";
 import CreateTicketModal from "../components/CreateTicketModal.jsx";
 
-import { safeArray, getTicketId, getTicketTitle, getStatus } from "../utils";
+import { safeArray, getTicketId, getTicketTitle, getStatus, formatResolutionSteps } from "../utils";
 
 import {
   PageHeader,
@@ -315,7 +315,7 @@ export default function TicketsPage({ user }) {
               <h3>Description / reported issue</h3>
               <p>{selected.description || selected.ticket || selected.problem || "No description was returned."}</p>
             </div>
-            {selected.suggested_resolution && <div className="ticket-description-block"><h3>Suggested resolution</h3><p>{selected.suggested_resolution}</p></div>}
+            {selected.suggested_resolution && <div className="ticket-description-block"><h3>Suggested resolution</h3><p>{formatResolutionSteps(selected.suggested_resolution)}</p></div>}
             {view === "enterprise" && (
               <div className="ticket-history-block">
                 <h3>History & timeline</h3>
