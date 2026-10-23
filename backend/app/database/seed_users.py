@@ -1,12 +1,23 @@
+import os
 import random
 
+from dotenv import load_dotenv
+
+from app.auth.password import hash_password
 from app.database.connection import get_connection
+
+load_dotenv()
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
 COMPANY_DOMAIN = "satven.com"
+
+# Real, working password for freshly seeded accounts. Override with
+# EMPLOYEE_DEFAULT_PASSWORD in .env so seeded users can log in immediately
+# (the old TEMP_PASSWORD_HASH placeholder locked everyone out).
+DEFAULT_PASSWORD = os.getenv("EMPLOYEE_DEFAULT_PASSWORD", "BugPilot@2026")
 
 FIRST_NAMES = [
     "Arjun",
@@ -253,13 +264,13 @@ def seed_users():
             designation = random.choice(config["designations"])
 
             # ------------------------------------------------
-            # Placeholder password hash
-            #
-            # Authentication will replace this later with
-            # proper bcrypt/argon2 password hashing.
+            # Working password hash (individually salted PBKDF2).
+            # Seeded employees can log in with DEFAULT_PASSWORD
+            # right away; run app.database.set_uniform_password
+            # to rotate them later.
             # ------------------------------------------------
 
-            password_hash = "TEMP_PASSWORD_HASH"
+            password_hash = hash_password(DEFAULT_PASSWORD)
 
             users.append(
                 (

@@ -1,3 +1,9 @@
+import hashlib
+import os
+import re
+import threading
+import time
+from collections import OrderedDict
 from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
@@ -101,6 +107,120 @@ builder.add_edge("generate_confidence_reason", END)
 
 
 bugpilot_graph = builder.compile()
+
+
+# ============================================================
+# PIPELINE DISPATCHER (fast by default) + RESULT CACHE
+# ============================================================
+#
+# BUGPILOT_PIPELINE=fast     -> single merged LLM call (default; ~3x faster)
+# BUGPILOT_PIPELINE=accurate -> original 5-node LangGraph workflow
+#
+# Identical tickets submitted within BUGPILOT_RESULT_CACHE_TTL seconds are
+# answered from an in-process cache instead of re-running the whole model.
+
+PIPELINE_MODE = os.getenv("BUGPILOT_PIPELINE", "fast").strip().lower()
+if PIPELINE_MODE not in {"fast", "accurate"}:
+    PIPELINE_MODE = "fast"
+
+RESULT_CACHE_TTL = int(os.getenv("BUGPILOT_RESULT_CACHE_TTL", "3600"))
+RESULT_CACHE_MAX = 256
+
+_result_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+_result_cache_lock = threading.Lock()
+
+
+def _initial_state(ticket_text: str) -> dict:
+    return {
+        "ticket": ticket_text,
+        "understanding": "",
+        "summary": "",
+        "category": "",
+        "module": "",
+        "problem": "",
+        "keywords": [],
+        "retrieved_context": "",
+        "retrieval_diagnostics": {},
+        "llm_status": "available",
+        "llm_error": "",
+        "ticket_understanding_status": "available",
+        "ticket_understanding_error": "",
+        "analysis_mode": "llm_rag",
+        "analysis": "",
+        "historical_evidence": "",
+        "severity": "",
+        "priority": "",
+        "likely_cause": "",
+        "suggested_resolution": "",
+        "missing_information": [],
+        "confidence_score": 0.0,
+        "confidence_level": "",
+        "confidence_reason": "",
+    }
+
+
+def _normalize_ticket_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip().lower()
+
+
+def _result_cache_get(key: str) -> dict | None:
+    if RESULT_CACHE_TTL <= 0:
+        return None
+    now = time.monotonic()
+    with _result_cache_lock:
+        entry = _result_cache.get(key)
+        if entry is None:
+            return None
+        stored_at, result = entry
+        if now - stored_at > RESULT_CACHE_TTL:
+            _result_cache.pop(key, None)
+            return None
+        _result_cache.move_to_end(key)
+        return dict(result)
+
+
+def _result_cache_put(key: str, result: dict) -> None:
+    if RESULT_CACHE_TTL <= 0:
+        return
+    with _result_cache_lock:
+        _result_cache[key] = (time.monotonic(), dict(result))
+        _result_cache.move_to_end(key)
+        while len(_result_cache) > RESULT_CACHE_MAX:
+            _result_cache.popitem(last=False)
+
+
+def run_analysis(ticket_text: str) -> dict:
+    """
+    Run the configured BugPilot pipeline for one ticket.
+
+    This is the single entry point used by the API layer. The returned
+    dictionary matches the original graph output contract in both modes.
+    """
+    ticket_text = str(ticket_text or "").strip()
+    if not ticket_text:
+        raise ValueError("Cannot run BugPilot analysis on an empty ticket.")
+
+    from app.services.llm_service import OLLAMA_MODEL
+
+    cache_key = hashlib.sha256(
+        f"{PIPELINE_MODE}|{OLLAMA_MODEL}|{_normalize_ticket_text(ticket_text)}".encode("utf-8")
+    ).hexdigest()
+
+    cached = _result_cache_get(cache_key)
+    if cached is not None:
+        # The cached copy keeps its own ticket wording; restore the caller's.
+        cached["ticket"] = ticket_text
+        return cached
+
+    if PIPELINE_MODE == "fast":
+        from app.agents.fast_pipeline import run_fast_pipeline
+
+        result = run_fast_pipeline(ticket_text)
+    else:
+        result = bugpilot_graph.invoke(_initial_state(ticket_text))
+
+    _result_cache_put(cache_key, result)
+    return result
 
 
 if __name__ == "__main__":

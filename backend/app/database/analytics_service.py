@@ -18,9 +18,10 @@ def _build_visibility_scope(
         if department_id is None:
             raise ValueError("Department could not be determined.")
         return " AND t.department_id = ?", [department_id]
-    if normalized_roles.intersection({"DEVELOPER", "SUPPORT"}):
-        return " AND (t.created_by = ? OR t.assigned_to = ?)", [employee_id, employee_id]
-    return " AND t.created_by = ?", [employee_id]
+    # EMPLOYEE, DEVELOPER, SUPPORT (and combinations): tickets the employee
+    # historically created OR that were assigned to them, matching the
+    # enterprise-ticket visibility rules.
+    return " AND (t.created_by = ? OR t.assigned_to = ?)", [employee_id, employee_id]
 
 
 def get_dashboard_statistics(

@@ -46,6 +46,7 @@ def create_master_tables() -> None:
                 password_hash TEXT NOT NULL,
                 department_id INTEGER NOT NULL,
                 designation TEXT,
+                photo_url TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 last_login_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -54,6 +55,13 @@ def create_master_tables() -> None:
                     REFERENCES departments(department_id)
             )
         """)
+
+        # Migration: databases created before profile photos existed lack
+        # users.photo_url, which /auth/me and the photo endpoints require.
+        cursor.execute("PRAGMA table_info(users)")
+        user_columns = {row["name"] for row in cursor.fetchall()}
+        if "photo_url" not in user_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN photo_url TEXT")
 
         # User-role mapping
         cursor.execute("""

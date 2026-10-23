@@ -1,7 +1,7 @@
 
 import logging
 import os
-from datetime import datetime, timezone
+import threading
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.agents.bugpilot_graph import bugpilot_graph
+from app.agents.bugpilot_graph import run_analysis
 from app.api.analytics_routes import router as analytics_router
 from app.api.schemas import (
     TicketAnalysisResponse,
@@ -20,6 +20,7 @@ from app.api.ticket_routes import router as enterprise_ticket_router
 from app.auth.dependencies import get_current_user
 from app.auth.rbac import get_user_roles
 from app.auth.routes import router as auth_router
+from app.database.enterprise_ticket_service import get_user_ticket_context
 from app.database.schema import create_master_tables
 from app.database.ticket_service import (
     get_all_analyzed_tickets,
@@ -51,6 +52,22 @@ def reconcile_ticket_embeddings() -> None:
         logger.exception("Embedding reconciliation failed.")
 
 
+def warmup_llm_in_background() -> None:
+    """Preload the Ollama model so the first analysis is not slowed by a cold load."""
+    if os.getenv("BUGPILOT_WARMUP", "1").strip().lower() in {"0", "false", "no"}:
+        return
+
+    def _warmup() -> None:
+        try:
+            from app.services.llm_service import warmup_model
+
+            warmup_model()
+        except Exception:
+            logger.exception("Unexpected error during LLM warmup.")
+
+    threading.Thread(target=_warmup, name="bugpilot-llm-warmup", daemon=True).start()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize application resources and manage the scheduler."""
@@ -62,6 +79,10 @@ async def lifespan(app: FastAPI):
     # This intentionally fails if the existing tickets table needs
     # migration; do not delete or recreate the database automatically.
     create_master_tables()
+
+    # Load the local LLM into memory in a background thread so the first
+    # user request does not pay the cold-start cost.
+    warmup_llm_in_background()
 
     # Schedule reconciliation asynchronously. Running model downloads synchronously
     # during startup can make the API appear unavailable on a fresh/offline machine.
@@ -143,6 +164,30 @@ def _is_admin(employee_id: str) -> bool:
     return "ADMIN" in get_user_roles(employee_id)
 
 
+def _access_context(employee_id: str) -> dict:
+    """Resolve roles/department for the analyzed-history endpoints.
+
+    ADMIN sees everything; MANAGER sees analyses owned by users in their
+    own department; everyone else sees only their own analyses.
+    """
+    context = get_user_ticket_context(employee_id)
+
+    if not context or not context["is_active"]:
+        raise HTTPException(status_code=401, detail="User is missing or inactive.")
+
+    roles = {role.upper() for role in context["roles"]}
+
+    if not roles:
+        raise HTTPException(status_code=403, detail="User has no assigned role.")
+
+    return {
+        "employee_id": employee_id,
+        "is_admin": "ADMIN" in roles,
+        "is_manager": "MANAGER" in roles,
+        "department_id": context["department_id"],
+    }
+
+
 # --------------------------------------------------
 # Health check
 # --------------------------------------------------
@@ -218,35 +263,10 @@ def analyze_ticket(
             detail="Ticket description cannot be empty.",
         )
 
-    initial_state = {
-        "ticket": ticket_text,
-        "understanding": "",
-        "summary": "",
-        "category": "",
-        "module": "",
-        "problem": "",
-        "keywords": [],
-        "retrieved_context": "",
-        "retrieval_diagnostics": {},
-        "llm_status": "available",
-        "llm_error": "",
-        "ticket_understanding_status": "available",
-        "ticket_understanding_error": "",
-        "analysis_mode": "llm_rag",
-        "analysis": "",
-        "historical_evidence": "",
-        "severity": "",
-        "priority": "",
-        "likely_cause": "",
-        "suggested_resolution": "",
-        "missing_information": [],
-        "confidence_score": 0.0,
-        "confidence_level": "",
-        "confidence_reason": "",
-    }
-
     try:
-        result = bugpilot_graph.invoke(initial_state)
+        # Single entry point: fast (1 merged LLM call) by default,
+        # or the original LangGraph workflow when BUGPILOT_PIPELINE=accurate.
+        result = run_analysis(ticket_text)
         # Guard against incomplete graph output before persisting it.
         defaults = {
             "ticket": ticket_text, "summary": ticket_text[:180],
@@ -353,9 +373,13 @@ def get_ticket_history(
     employee_id = current_user["employee_id"]
 
     try:
+        access = _access_context(employee_id)
+
         tickets = get_all_analyzed_tickets(
             employee_id=employee_id,
-            is_admin=_is_admin(employee_id),
+            is_admin=access["is_admin"],
+            is_manager=access["is_manager"],
+            department_id=access["department_id"],
         )
 
         return {
@@ -392,10 +416,14 @@ def get_ticket(
     employee_id = current_user["employee_id"]
 
     try:
+        access = _access_context(employee_id)
+
         ticket = get_analyzed_ticket(
             ticket_id,
             employee_id=employee_id,
-            is_admin=_is_admin(employee_id),
+            is_admin=access["is_admin"],
+            is_manager=access["is_manager"],
+            department_id=access["department_id"],
         )
 
     except Exception as error:

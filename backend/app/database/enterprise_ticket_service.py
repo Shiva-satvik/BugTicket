@@ -105,6 +105,7 @@ def get_all_tickets(
     created_by: str | None = None,
     assigned_to: str | None = None,
     scope_department_id: int | None = None,
+    participant: str | None = None,
 ):
     if sort_by not in ALLOWED_SORT_COLUMNS:
         raise ValueError("Invalid sort field.")
@@ -157,6 +158,10 @@ def get_all_tickets(
         if assigned_to is not None:
             query += " AND t.assigned_to = ?"
             params.append(assigned_to)
+        if participant is not None:
+            # Tickets the employee historically created OR was assigned.
+            query += " AND (t.created_by = ? OR t.assigned_to = ?)"
+            params.extend([participant, participant])
         if scope_department_id is not None:
             query += " AND t.department_id = ?"
             params.append(scope_department_id)

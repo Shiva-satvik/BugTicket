@@ -143,11 +143,18 @@ def save_analyzed_ticket(result: dict, created_by: str | None = None) -> int:
 def get_all_analyzed_tickets(
     employee_id: str | None = None,
     is_admin: bool = False,
+    is_manager: bool = False,
+    department_id: int | None = None,
 ) -> list[dict]:
     """
-    List analyses belonging to the signed-in employee.
-    Administrators can request the full list. Old records with no owner are
-    not exposed to regular users after the ownership migration.
+    List analyses according to the caller's role-based access level:
+
+    - ADMIN      -> every analysis in the system.
+    - MANAGER    -> analyses owned by users in the manager's department.
+    - everyone   -> only their own analyses.
+
+    Old records with no owner are not exposed to regular users after the
+    ownership migration.
     """
     connection = get_connection()
     try:
@@ -160,6 +167,16 @@ def get_all_analyzed_tickets(
                 FROM analyzed_tickets
                 ORDER BY id DESC
             """)
+        elif is_manager and department_id is not None:
+            cursor.execute("""
+                SELECT a.id, a.ticket, a.summary, a.category, a.module, a.severity,
+                       a.priority, a.confidence_score, a.confidence_level,
+                       a.llm_status, a.analysis_mode, a.created_by, a.created_at
+                FROM analyzed_tickets a
+                INNER JOIN users u ON a.created_by = u.employee_id
+                WHERE u.department_id = ?
+                ORDER BY a.id DESC
+            """, (department_id,))
         elif employee_id:
             cursor.execute("""
                 SELECT id, ticket, summary, category, module, severity, priority,
@@ -180,28 +197,41 @@ def get_analyzed_ticket(
     ticket_id: int,
     employee_id: str | None = None,
     is_admin: bool = False,
+    is_manager: bool = False,
+    department_id: int | None = None,
 ) -> dict | None:
-    """Fetch one analysis only if the caller owns it or is an administrator."""
+    """
+    Fetch one analysis only if the caller owns it, is an administrator,
+    or is a manager whose department contains the analysis owner.
+    """
     if ticket_id <= 0:
         raise ValueError("Ticket ID must be greater than 0.")
 
     connection = get_connection()
     try:
         cursor = connection.cursor()
+        row = None
         if is_admin:
-            cursor.execute(
+            row = cursor.execute(
                 "SELECT * FROM analyzed_tickets WHERE id = ?",
                 (ticket_id,),
-            )
+            ).fetchone()
+        elif is_manager and department_id is not None:
+            row = cursor.execute(
+                """
+                SELECT a.*
+                FROM analyzed_tickets a
+                INNER JOIN users u ON a.created_by = u.employee_id
+                WHERE a.id = ? AND u.department_id = ?
+                """,
+                (ticket_id, department_id),
+            ).fetchone()
         elif employee_id:
-            cursor.execute(
+            row = cursor.execute(
                 "SELECT * FROM analyzed_tickets WHERE id = ? AND created_by = ?",
                 (ticket_id, employee_id),
-            )
-        else:
-            return None
+            ).fetchone()
 
-        row = cursor.fetchone()
         if row is None:
             return None
 

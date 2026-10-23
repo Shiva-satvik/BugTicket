@@ -130,14 +130,13 @@ def _can_view(ticket: dict, context: dict) -> bool:
     if roles.intersection({"MANAGER", "VIEWER"}):
         return ticket["department_id"] == context["department_id"]
 
-    if (
-        ticket["created_by"] == employee_id
-        and roles.intersection({"EMPLOYEE", "DEVELOPER", "SUPPORT"})
-    ):
-        return True
-
-    if roles.intersection({"DEVELOPER", "SUPPORT"}):
-        return ticket["assigned_to"] == employee_id
+    # EMPLOYEE / DEVELOPER / SUPPORT: a ticket is visible when the employee
+    # historically created it OR it was assigned to them.
+    if roles.intersection({"EMPLOYEE", "DEVELOPER", "SUPPORT"}):
+        return (
+            ticket["created_by"] == employee_id
+            or ticket["assigned_to"] == employee_id
+        )
 
     return False
 
@@ -168,16 +167,11 @@ def _ticket_scope(context: dict) -> dict:
             "scope_department_id": context["department_id"]
         }
 
-    if (
-        "EMPLOYEE" in roles
-        and not roles.intersection({"DEVELOPER", "SUPPORT"})
-    ):
-        return {"created_by": context["employee_id"]}
-
-    if roles.intersection({"DEVELOPER", "SUPPORT"}):
-        return {"assigned_to": context["employee_id"]}
-
-    return {"created_by": context["employee_id"]}
+    # EMPLOYEE, DEVELOPER, SUPPORT (and any combination of them) share the
+    # same participant scope: tickets they created OR that were assigned
+    # to them. The database enforces it in a single query, so sorting and
+    # pagination stay consistent.
+    return {"participant": context["employee_id"]}
 
 
 # ============================================================
@@ -269,58 +263,6 @@ def _fetch_tickets(
             status_code=400,
             detail=str(exc),
         ) from exc
-
-    # Developers and support staff can see assigned tickets
-    # and tickets they created.
-    if (
-        roles.intersection({"DEVELOPER", "SUPPORT"})
-        and "ADMIN" not in roles
-        and "MANAGER" not in roles
-    ):
-        own_tickets = get_all_tickets(
-            status=status,
-            priority=priority,
-            severity=severity,
-            department_id=department_id,
-            start_date=start_date.isoformat() if start_date else None,
-            end_date=end_date.isoformat() if end_date else None,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            created_by=context["employee_id"],
-        )
-
-        tickets_by_id = {
-            item["ticket_id"]: item for item in tickets
-        }
-        tickets_by_id.update({
-            item["ticket_id"]: item for item in own_tickets
-        })
-
-        # The service supports these sort columns. Sorting is kept
-        # consistent with the service's allowed fields.
-        sort_keys = {
-            "created_at": "created_at",
-            "updated_at": "updated_at",
-            "priority": "priority",
-            "severity": "severity",
-            "status": "status",
-            "ticket_code": "ticket_code",
-        }
-
-        if sort_by not in sort_keys:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid sort field.",
-            )
-
-        tickets = sorted(
-            tickets_by_id.values(),
-            key=lambda item: (
-                str(item.get(sort_keys[sort_by]) or ""),
-                item["ticket_id"],
-            ),
-            reverse=sort_order.lower() == "desc",
-        )
 
     return tickets
 
