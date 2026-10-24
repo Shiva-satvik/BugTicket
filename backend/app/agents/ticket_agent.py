@@ -108,14 +108,14 @@ TICKET:
 {ticket}
 
 Identify:
-1. A short summary.
+1. A comprhensive summary.
 2. The issue category.
 3. The affected business or technical module.
 4. The actual reported problem.
 5. Important relevant keywords.
 
 Rules:
-- Do not solve the bug.
+- Do solve the bug.
 - Do not invent facts.
 - Use "Unknown" when a field cannot be determined.
 - Do not introduce unrelated systems or technologies.
@@ -123,7 +123,7 @@ Rules:
 
 Required JSON structure:
 {{
-  "summary": "Short issue summary",
+  "summary": "Comprehensive issue summary",
   "category": "Issue category",
   "module": "Affected module",
   "problem": "Reported problem",

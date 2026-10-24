@@ -148,8 +148,8 @@ SPECIFICITY RULES (highest priority):
 - Every ticket is different. Your output must be recognizably about THIS ticket's exact symptom, module and error.
 - In "analysis" and "historical_evidence", cite the concrete ticket codes (e.g. BP-2026-000549) and document codes (e.g. FD-007) found in the retrieved evidence, and state in one sentence HOW each connects to this ticket. If no evidence was retrieved, say so plainly.
 - "suggested_resolution" MUST contain AT LEAST 3 numbered steps (3-5 is ideal, never 1 or 2). Each step's target comes from THIS ticket and the evidence: name the exact interface/module/record type/error pattern to inspect and the specific observation that confirms or rules out each step.
-- In "likely_cause", name the single most probable cause for THIS ticket and the strongest piece of evidence supporting it. If unconfirmed, add the specific finding that would confirm it.
-- If the evidence lacks detail needed for a specific step, put the exact missing item in "missing_information" instead of writing vague text.
+- In "likely_cause", name possible causes for THIS ticket and the strongest piece of evidence supporting each. If unconfirmed, add the specific finding that would confirm it.
+- If the evidence lacks detail needed for a specific step, put the exact missing item in "missing_information" instead of writing vague text.The likely cause and suggested solution should be detailed comphrensive and in a very detailed understanding of the issue answer and even for the user.
 
 TICKET:
 {ticket}
@@ -159,7 +159,7 @@ RETRIEVED HISTORICAL TICKETS / DOCUMENTS:
 
 Return ONLY one valid JSON object with exactly these fields:
 {{
-  "summary": "Short issue summary, max 20 words. Do not copy the ticket title verbatim; state the suspected cause and affected module.",
+  "summary": "Comprehensive issue summary Do not copy the ticket title verbatim; state the suspected cause and affected module.",
   "category": "Issue category",
   "module": "Affected module",
   "problem": "The reported problem restated specifically",
@@ -171,8 +171,9 @@ Return ONLY one valid JSON object with exactly these fields:
   "likely_cause": "Most probable cause for THIS ticket, naming the supporting evidence; say if unconfirmed.",
   "suggested_resolution": "Numbered concrete steps, each with a specific target from this ticket/evidence, plus validation.",
   "missing_information": ["Specific information needed to confirm the cause"],
-  "confidence_notes": "2-3 sentences for the user: what evidence supports this assessment and what remains uncertain. Never mention scores, weights, formulas, embeddings, or internal calculations."
+  "confidence_notes": "several sentences for the user: what evidence supports this assessment and what remains uncertain. Never mention scores, weights, formulas, embeddings, or internal calculations."
 }}
+
 
 Choose severity and priority based on demonstrated impact, not merely because the issue concerns payroll/finance. Use valid JSON with double quotes, a comma after every field except the last, no trailing commas, and no Markdown fences. Write complete, specific values for every field; never abbreviate the resolution list to finish early.
 """
