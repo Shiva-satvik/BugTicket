@@ -14,6 +14,17 @@ contract with ONE merged LLM call:
        from the model's own notes - no third LLM call.
 
 Set BUGPILOT_PIPELINE=accurate to keep the original graph behavior.
+
+Notes on this version:
+- The LLM call goes through the multi-provider llm_service (Ollama, then
+  Hugging Face in auto mode).
+- Small local models sometimes return slightly malformed JSON (missing
+  commas, trailing commas, truncated tail). The reply is now parsed with a
+  tolerant parser and, if it is still unusable, the call is retried once
+  before the degraded fallback is used. The raw model output is logged on
+  every failed attempt so the real cause is visible.
+- The degraded fallback text no longer blames "Ollama" specifically and
+  points at GET /api/ai/status for live diagnostics.
 """
 
 import json
@@ -32,6 +43,9 @@ logger = logging.getLogger(__name__)
 # llama3.2 tends to compress long lists when the budget is tight, so the
 # budget is generous (the service layer clamps it to its own maximum).
 MERGED_NUM_PREDICT = 1400
+
+# Number of attempts for the merged LLM call before using the fallback.
+MERGED_MAX_ATTEMPTS = 2
 
 # Retrieved evidence fed to the model. 3000 chars keeps the merged prompt
 # well inside the configured context window (OLLAMA_NUM_CTX) so Ollama does
@@ -66,6 +80,63 @@ def _clean_json_response(response: str) -> str:
     if first_brace >= 0 and last_brace > first_brace:
         response = response[first_brace:last_brace + 1]
     return response
+
+
+def _close_truncated_json(text: str) -> str:
+    """Close an unterminated string / arrays / objects (output cut off early)."""
+    stack = []
+    in_str = False
+    esc = False
+    for ch in text:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        else:
+            if ch == '"':
+                in_str = True
+            elif ch in "{[":
+                stack.append("}" if ch == "{" else "]")
+            elif ch in "}]" and stack:
+                stack.pop()
+    if in_str:
+        text += '"'
+    text = re.sub(r",\s*$", "", text)
+    return text + "".join(reversed(stack))
+
+
+def _repair_json_text(text: str) -> str:
+    """Best-effort repair of the usual small-model JSON mistakes."""
+    text = text.replace("\u201c", '"').replace("\u201d", '"')
+    # Missing comma between two lines:  "a": "x"\n  "b": ...
+    text = re.sub(r'(["\]}]|\d|true|false|null)(\s*\n\s*)"', r'\1,\2"', text)
+    # Trailing commas before a closing bracket/brace.
+    text = re.sub(r",(\s*[}\]])", r"\1", text)
+    text = _close_truncated_json(text)
+    return re.sub(r",(\s*[}\]])", r"\1", text)
+
+
+def _parse_llm_json(response: str) -> dict:
+    """Parse model output: strict first, then repaired / truncation-closed."""
+    response = response or ""
+    candidates = [_clean_json_response(response)]
+    start = response.find("{")
+    if start >= 0:
+        candidates.append(response[start:])  # keeps a truncated tail
+
+    last_exc = None
+    for candidate in candidates:
+        for fix in (lambda s: s, _repair_json_text):
+            try:
+                return json.loads(fix(candidate), strict=False)
+            except json.JSONDecodeError as exc:
+                last_exc = exc
+    if last_exc is None:
+        raise ValueError("LLM response contained no JSON object.")
+    raise last_exc
 
 
 def _merged_prompt(ticket: str, retrieved_context: str) -> str:
@@ -103,7 +174,7 @@ Return ONLY one valid JSON object with exactly these fields:
   "confidence_notes": "2-3 sentences for the user: what evidence supports this assessment and what remains uncertain. Never mention scores, weights, formulas, embeddings, or internal calculations."
 }}
 
-Choose severity and priority based on demonstrated impact, not merely because the issue concerns payroll/finance. Use valid JSON with double quotes, no trailing commas, and no Markdown fences. Write complete, specific values for every field; never abbreviate the resolution list to finish early.
+Choose severity and priority based on demonstrated impact, not merely because the issue concerns payroll/finance. Use valid JSON with double quotes, a comma after every field except the last, no trailing commas, and no Markdown fences. Write complete, specific values for every field; never abbreviate the resolution list to finish early.
 """
 
 
@@ -232,10 +303,17 @@ def _fallback_result(ticket: str, retrieved_context: str, diagnostics: dict, err
     else:
         evidence_text = "No historical ticket or financial-document evidence was returned by retrieval for this query."
 
+    # This text is what the user sees as the "standard response" when the AI
+    # provider is down or returns unusable output. Keep it explicit and
+    # actionable instead of quietly returning boilerplate.
     analysis_text = (
-        "The Ollama analysis call failed, so this is a retrieval-grounded fallback, not an LLM-generated analysis. "
-        + evidence_text
-        + " Review the provider error and validate the issue manually."
+        "AI model call failed, so this is a rule-based fallback, not an LLM-generated analysis. "
+        + evidence_text + " "
+        + f"Provider error: {type(error).__name__}: {str(error)[:250]} "
+        + "Fix: check GET /api/ai/status for live provider health. If the error mentions "
+        "JSONDecodeError, the model replied but returned malformed JSON; simply retry. "
+        "If Ollama is not running, start it (ollama serve) and make sure the model is pulled "
+        "(ollama pull llama3.2:latest). HF_TOKEN in .env enables the Hugging Face fallback."
     )
     cause = (
         "The retrieved historical tickets and financial documents should be compared with the reported symptoms; "
@@ -431,7 +509,7 @@ def _enrich_resolution(resolution: str, module: str, evidence: str) -> str:
 
 def run_fast_pipeline(ticket: str) -> dict:
     """
-    Analyze one ticket with a single LLM call.
+    Analyze one ticket with a single LLM call (retried once on unusable output).
 
     Returns the same state keys the original LangGraph workflow produced,
     so the API layer and the analyzed-history storage need no changes.
@@ -461,16 +539,37 @@ def run_fast_pipeline(ticket: str) -> dict:
     # STEP 2: single merged LLM call (understanding + analysis)
     # ------------------------------------------------------------
     try:
-        response = generate_response(
-            _merged_prompt(ticket, retrieved_context),
-            response_format="json",
-            num_predict=MERGED_NUM_PREDICT,
-        )
-        if not isinstance(response, str) or not response.strip():
-            raise RuntimeError("Ollama returned an empty merged analysis response.")
+        validated = None
+        last_error = None
+        prompt = _merged_prompt(ticket, retrieved_context)
 
-        data = json.loads(_clean_json_response(response))
-        validated = _validate_merged_response(data, ticket)
+        for attempt in range(1, MERGED_MAX_ATTEMPTS + 1):
+            response = generate_response(
+                prompt,
+                response_format="json",
+                num_predict=MERGED_NUM_PREDICT,
+            )
+            if not isinstance(response, str) or not response.strip():
+                last_error = RuntimeError("LLM returned an empty merged analysis response.")
+                logger.warning("Merged analysis attempt %d returned an empty response", attempt)
+                continue
+            try:
+                data = _parse_llm_json(response)
+                validated = _validate_merged_response(data, ticket)
+                break
+            except Exception as exc:
+                last_error = exc
+                # Log the raw model output so the real failure is visible.
+                logger.warning(
+                    "Merged analysis attempt %d returned unusable JSON (%s). Raw output: %.800s",
+                    attempt,
+                    exc,
+                    response,
+                )
+
+        if validated is None:
+            raise last_error or RuntimeError("Merged analysis produced no result.")
+
         validated["suggested_resolution"] = _enrich_resolution(
             validated["suggested_resolution"],
             validated["module"],
@@ -568,8 +667,9 @@ def run_fast_pipeline(ticket: str) -> dict:
     }
 
     logger.info(
-        "Fast pipeline completed in %.2f seconds (1 LLM call)",
+        "Fast pipeline completed in %.2f seconds (LLM call attempts allowed: %d)",
         time.monotonic() - started,
+        MERGED_MAX_ATTEMPTS,
     )
 
     return result

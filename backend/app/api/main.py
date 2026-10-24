@@ -53,7 +53,7 @@ def reconcile_ticket_embeddings() -> None:
 
 
 def warmup_llm_in_background() -> None:
-    """Preload the Ollama model so the first analysis is not slowed by a cold load."""
+    """Preload the LLM provider so the first analysis is not slowed by a cold load."""
     if os.getenv("BUGPILOT_WARMUP", "1").strip().lower() in {"0", "false", "no"}:
         return
 
@@ -198,6 +198,33 @@ def health_check():
         "status": "healthy",
         "service": "BugPilot API",
     }
+
+
+# --------------------------------------------------
+# AI provider diagnostics (NEW)
+# --------------------------------------------------
+
+@app.get("/api/ai/status", tags=["AI Ticket Analysis"])
+def ai_provider_status():
+    """
+    Live LLM provider diagnostics.
+
+    Shows whether Ollama is reachable, whether its model is installed,
+    whether the Hugging Face fallback is configured, and which provider
+    auto mode will use right now. Returns no secrets, so it is safe to
+    call without authentication. Use this to see WHY an analysis fell
+    back to the standard template response.
+    """
+    from app.services.llm_service import get_llm_status
+
+    try:
+        return get_llm_status()
+    except Exception:
+        logger.exception("Could not collect LLM provider status.")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not collect LLM provider status.",
+        )
 
 
 # --------------------------------------------------

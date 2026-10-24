@@ -1,15 +1,23 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
-
 import { AlertCircle, CheckCircle2, Database, Download, FileText, ShieldAlert, Sparkles } from "lucide-react";
 import { jsPDF } from "jspdf";
-
 import { ticketApi, errorMessage } from "../api/services";
-
 import { objectOrEmpty, safeArray, fmt, parseResolutionSteps } from "../utils";
-
 import { PageHeader, ResultBlock } from "../components/Common.jsx";
+
+/* Pinned font versions (avoid "@latest" so the report never changes unexpectedly). */
+const INTER_REGULAR_URL = "https://cdn.jsdelivr.net/fontsource/fonts/inter@5.0.8/latin-400-normal.ttf";
+const INTER_BOLD_URL = "https://cdn.jsdelivr.net/fontsource/fonts/inter@5.0.8/latin-700-normal.ttf";
+
+/* Convert a confidence score (0–1 or 0–100) to a whole percentage, or null if missing/invalid. */
+function toPercent(score) {
+  if (score === undefined || score === null || score === "") return null;
+  const n = Number(score);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n <= 1 ? n * 100 : n);
+}
 
 export default function AIAnalysisPage() {
   const location = useLocation();
@@ -27,6 +35,7 @@ export default function AIAnalysisPage() {
 
   async function downloadReport() {
     if (!result) return;
+
     const pdf = new jsPDF({ unit: "pt", format: "a4" });
 
     /* BugPilot design tokens — mirrors the light theme in src/theme.css */
@@ -46,8 +55,7 @@ export default function AIAnalysisPage() {
       white: "#ffffff",
     };
 
-    // Load the app's UI font (Inter) so the report matches the product theme.
-    // Falls back to the built-in Helvetica when the font files can't be fetched.
+    // Load the app's UI font (Inter). Falls back to built-in Helvetica if the files can't be fetched.
     async function loadFont(url, fileKey, style) {
       try {
         const response = await fetch(url);
@@ -66,11 +74,11 @@ export default function AIAnalysisPage() {
       }
     }
 
-    const hasRegular = await loadFont("https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-400-normal.ttf", "Inter-Regular.ttf", "normal");
-    const hasBold = await loadFont("https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-700-normal.ttf", "Inter-Bold.ttf", "bold");
+    const hasRegular = await loadFont(INTER_REGULAR_URL, "Inter-Regular.ttf", "normal");
+    const hasBold = await loadFont(INTER_BOLD_URL, "Inter-Bold.ttf", "bold");
     const BODY = hasRegular ? "Inter" : "helvetica";
     const BOLD = hasBold ? "Inter" : "helvetica";
-    const MONO = "courier"; // built-in mono for ticket/document codes (matches --mono usage)
+    const MONO = "courier"; // built-in mono for ticket/document codes
 
     const margin = 46;
     const pageWidth = pdf.internal.pageSize.getWidth();
@@ -142,9 +150,12 @@ export default function AIAnalysisPage() {
       set(BODY, "normal", size, color);
       const rows = pdf.splitTextToSize(String(text ?? "—"), contentWidth);
       const lineHeight = size * 1.55;
-      ensure(rows.length * lineHeight + 8);
+      ensure(Math.min(rows.length, 3) * lineHeight + 8);
       for (const row of rows) {
-        if (y + lineHeight > maxY) newPage();
+        if (y + lineHeight > maxY) {
+          newPage();
+          set(BODY, "normal", size, color); // restore font state after page break
+        }
         pdf.text(row, margin, y + size);
         y += lineHeight;
       }
@@ -161,6 +172,7 @@ export default function AIAnalysisPage() {
       pdf.roundedRect(margin, y, contentWidth, height, 6, 6, "F");
       pdf.setFillColor(C.accent);
       pdf.rect(margin, y + 7, 3, height - 14, "F");
+      set(BODY, "normal", 10, C.ink);
       rows.forEach((row, index) => pdf.text(row, margin + 16, y + 18 + index * lineHeight));
       y += height + 16;
     };
@@ -183,8 +195,7 @@ export default function AIAnalysisPage() {
         {
           label: "CONFIDENCE",
           render: (x) => {
-            const score = result.confidence_score;
-            const pct = score === undefined ? null : Math.round(Number(score) <= 1 ? Number(score) * 100 : Number(score));
+            const pct = toPercent(result.confidence_score);
             set(BOLD, "bold", 14, C.navy);
             pdf.text(pct === null ? "—" : `${pct}%`, x + 12, top + 41);
             if (pct !== null) {
@@ -206,6 +217,7 @@ export default function AIAnalysisPage() {
           },
         },
       ];
+
       cards.forEach((card, index) => {
         const x = margin + index * (cardW + gap);
         pdf.setFillColor(C.white);
@@ -250,30 +262,36 @@ export default function AIAnalysisPage() {
     pdf.rect(0, 0, pageWidth, headerH, "F");
     pdf.setFillColor(C.accent);
     pdf.rect(0, headerH, pageWidth, 3, "F");
+
     set(MONO, "bold", 8, C.accentSoft);
     pdf.text("BUGPILOT · AI TRIAGE", margin, 30, { charSpace: 1.4 });
     set(BOLD, "bold", 20, C.white);
     pdf.text("AI Analysis Report", margin, 58);
     set(BODY, "normal", 8.5, C.accentSoft);
     pdf.text(`Generated: ${new Date().toLocaleString()}`, margin, 78);
+
     y = headerH + 27;
 
     /* ---- Report body (section order preserved) ---- */
     heading("Reported issue");
     callout(ticket);
+
     heading("Summary");
     paragraph(result.summary || result.problem || "Ticket analysis completed.");
     metaCards();
+
     heading("Ticket understanding");
     paragraph(result.problem || result.ticket || ticket);
+
     heading("Detailed analysis");
     paragraph(result.analysis || "Not available");
+
     heading("Historical evidence");
     paragraph(result.historical_evidence || "No historical evidence was returned.");
+
     heading("Likely cause");
     paragraph(result.likely_cause || "Not specified");
 
-    ensure(120); // heading + first numbered step stay on the same page
     heading("Suggested resolution");
     const resolutionSteps = parseResolutionSteps(result.suggested_resolution);
     if (!resolutionSteps.length) {
@@ -289,7 +307,7 @@ export default function AIAnalysisPage() {
         pdf.setFillColor(C.accentSoft);
         pdf.roundedRect(margin, y, 26, 15, 4.5, 4.5, "F");
         set(BOLD, "bold", 8.5, C.navy);
-        pdf.text(step.step, margin + 13, y + 10.5, { align: "center" });
+        pdf.text(String(step.step), margin + 13, y + 10.5, { align: "center" });
         set(BODY, "normal", 10, C.ink);
         rows.forEach((row, index) => pdf.text(row, margin + numW, y + 10 + index * lineHeight));
         y += height + 9;
@@ -303,8 +321,9 @@ export default function AIAnalysisPage() {
     heading("Confidence check", levelBadge);
     paragraph(result.confidence_reason || "Not specified");
 
-    const ticketSources = result.retrieval_diagnostics?.ticket_sources || [];
-    const documentSources = result.retrieval_diagnostics?.financial_document_sources || [];
+    const ticketSources = safeArray(result.retrieval_diagnostics?.ticket_sources);
+    const documentSources = safeArray(result.retrieval_diagnostics?.financial_document_sources);
+
     heading("Retrieved historical tickets");
     sourceList(
       ticketSources,
@@ -314,6 +333,7 @@ export default function AIAnalysisPage() {
         rest: `${item.module || "Module unknown"} — ${item.category || "Category unknown"}`,
       }),
     );
+
     heading("Retrieved financial documents");
     sourceList(
       documentSources,
@@ -338,20 +358,22 @@ export default function AIAnalysisPage() {
       pdf.text(`Page ${page} of ${totalPages}`, pageWidth - margin, top + footerH / 2 + 2.5, { align: "right" });
     }
 
-    const safeName = String(result.summary || "bugpilot-ai-analysis").replace(/[^a-z0-9-_]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "bugpilot-ai-analysis";
+    const safeName =
+      String(result.summary || "bugpilot-ai-analysis")
+        .replace(/[^a-z0-9_-]+/gi, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 50) || "bugpilot-ai-analysis";
+
     pdf.save(`${safeName}.pdf`);
   }
 
   async function submit(event) {
     event.preventDefault();
-
     setBusy(true);
     setError("");
     setResult(null);
-
     try {
       const { data } = await ticketApi.analyze(ticket.trim());
-
       setResult(objectOrEmpty(data));
     } catch (err) {
       setError(errorMessage(err, "AI ticket analysis failed."));
@@ -359,6 +381,11 @@ export default function AIAnalysisPage() {
       setBusy(false);
     }
   }
+
+  const confidencePct = result ? toPercent(result.confidence_score) : null;
+  const ticketSources = safeArray(result?.retrieval_diagnostics?.ticket_sources);
+  const documentSources = safeArray(result?.retrieval_diagnostics?.financial_document_sources);
+  const diag = result?.retrieval_diagnostics;
 
   return (
     <>
@@ -376,7 +403,6 @@ export default function AIAnalysisPage() {
               <h2>Describe the issue</h2>
               <p>Provide the ticket details in plain language.</p>
             </div>
-
             <span className="ai-chip">
               <Sparkles size={15} />
               AI assisted
@@ -395,7 +421,6 @@ export default function AIAnalysisPage() {
 
           <div className="analysis-form-bottom">
             <span>{ticket.length.toLocaleString()} / 10,000 characters</span>
-
             <button
               type="submit"
               className="button button-primary"
@@ -441,12 +466,17 @@ export default function AIAnalysisPage() {
             <div><CheckCircle2 size={16} />Suggested resolution and confidence reason</div>
           </div>
           <small>Results depend on backend availability and your account's access.</small>
-        </div>      </div>
+        </div>
+      </div>
 
       {result && createPortal(
-        <div className="modal-backdrop ai-result-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setResult(null);
-        }}>
+        <div
+          className="modal-backdrop ai-result-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setResult(null);
+          }}
+        >
           <section className="ticket-modal ai-result-modal" role="dialog" aria-modal="true" aria-labelledby="ai-result-title">
             <div className="ai-modal-header">
               <div>
@@ -456,30 +486,42 @@ export default function AIAnalysisPage() {
               </div>
               <button type="button" className="icon-button border-button" aria-label="Close analysis result" onClick={() => setResult(null)}>×</button>
             </div>
+
             <div className="ai-query-block">
               <span>YOUR QUERY</span>
               <p>{ticket}</p>
             </div>
-            {result.analysis_mode && result.analysis_mode !== "llm_rag" && (
+
+            {/* Banner keys off llm_status so it only appears for genuinely degraded results
+                (the fast pipeline returns analysis_mode "llm_rag_fast" on success). */}
+            {result.llm_status && result.llm_status !== "available" && (
               <div className="alert alert-warning analysis-mode-warning">
                 <ShieldAlert size={17} />
-                <span><b>Fallback / degraded analysis.</b> This is not a fully successful Hugging Face RAG analysis. {result.llm_error || "Check the backend terminal for the underlying failure."}</span>
+                <span>
+                  <b>Fallback / degraded analysis.</b> The AI model call failed, so this result came from the rule-based fallback instead of a real LLM analysis.
+                  {result.llm_error ? ` Reason: ${result.llm_error}` : " Check the backend terminal for the underlying failure."}
+                  {" "}Fix: start Ollama (ollama serve) and pull the model (ollama pull llama3.2:latest). If the reason mentions JSONDecodeError, the model returned malformed output; simply retry. You can also set HF_TOKEN in .env to enable the Hugging Face cloud fallback.
+                </span>
               </div>
             )}
+
             <div className="retrieval-status-grid">
-              <div><Database size={17}/><span><small>Historical tickets retrieved</small><b>{result.retrieval_diagnostics?.ticket_count ?? 0}</b></span></div>
-              <div><FileText size={17}/><span><small>Financial documents retrieved</small><b>{result.retrieval_diagnostics?.financial_document_count ?? 0}</b></span></div>
-              <div><Sparkles size={17}/><span><small>LLM provider</small><b>{result.llm_status || "unknown"}</b></span></div>
+              <div><Database size={17} /><span><small>Historical tickets retrieved</small><b>{diag?.ticket_count ?? 0}</b></span></div>
+              <div><FileText size={17} /><span><small>Financial documents retrieved</small><b>{diag?.financial_document_count ?? 0}</b></span></div>
+              <div><Sparkles size={17} /><span><small>LLM provider</small><b>{result.llm_status || "unknown"}</b></span></div>
             </div>
+
             <div className="result-metrics">
               <div><span>Severity</span><b>{fmt(result.severity)}</b></div>
-              <div><span>Confidence</span><b>{result.confidence_score === undefined ? "—" : `${Math.round(Number(result.confidence_score) <= 1 ? Number(result.confidence_score) * 100 : Number(result.confidence_score))}%`}</b></div>
+              <div><span>Confidence</span><b>{confidencePct === null ? "—" : `${confidencePct}%`}</b></div>
             </div>
+
             <ResultBlock title="Category & module" body={[result.category, result.module].filter(Boolean).join(" · ") || "Not specified"} />
             <ResultBlock title="Ticket understanding" body={result.problem || result.ticket || ticket} />
             <ResultBlock title="Detailed analysis" body={result.analysis} />
             <ResultBlock title="Historical evidence" body={result.historical_evidence} />
             <ResultBlock title="Likely cause" body={result.likely_cause} />
+
             <section className="result-block">
               <h3>Suggested resolution</h3>
               {(() => {
@@ -499,26 +541,60 @@ export default function AIAnalysisPage() {
                 );
               })()}
             </section>
+
             <ResultBlock title={`Confidence check · ${result.confidence_level || "Unrated"}`} body={result.confidence_reason} />
+
             <section className="result-block evidence-sources">
               <h3>Retrieved sources</h3>
+
               <h4>Historical tickets</h4>
-              {result.retrieval_diagnostics?.ticket_sources?.length ? <ul>{result.retrieval_diagnostics.ticket_sources.map((item) => <li key={item.ticket_code}><b>{item.ticket_code}</b> · {item.module || "Module unknown"} · {item.category || "Category unknown"} <small>({(item.retrieved_by || []).join(" + ") || "retrieval source unknown"})</small></li>)}</ul> : <p>No historical tickets were retrieved for this query.</p>}
+              {ticketSources.length ? (
+                <ul>
+                  {ticketSources.map((item, index) => (
+                    <li key={item.ticket_code || index}>
+                      <b>{item.ticket_code}</b> · {item.module || "Module unknown"} · {item.category || "Category unknown"}{" "}
+                      <small>({safeArray(item.retrieved_by).join(" + ") || "retrieval source unknown"})</small>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No historical tickets were retrieved for this query.</p>
+              )}
+
               <h4>Financial SOPs / policies</h4>
-              {result.retrieval_diagnostics?.financial_document_sources?.length ? <ul>{result.retrieval_diagnostics.financial_document_sources.map((item) => <li key={item.document_code}><b>{item.document_code}</b> · {item.title} · {item.module || "Module unknown"}</li>)}</ul> : <p>No financial documents were retrieved for this query.</p>}
-              {(result.retrieval_diagnostics?.semantic_error || result.retrieval_diagnostics?.keyword_error || result.retrieval_diagnostics?.financial_document_error) && (
+              {documentSources.length ? (
+                <ul>
+                  {documentSources.map((item, index) => (
+                    <li key={item.document_code || index}>
+                      <b>{item.document_code}</b> · {item.title} · {item.module || "Module unknown"}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No financial documents were retrieved for this query.</p>
+              )}
+
+              {(diag?.semantic_error || diag?.keyword_error || diag?.financial_document_error) && (
                 <>
                   <h4>Retrieval diagnostics</h4>
-                  {result.retrieval_diagnostics?.semantic_error && <p>Semantic retrieval error: {result.retrieval_diagnostics.semantic_error}</p>}
-                  {result.retrieval_diagnostics?.keyword_error && <p>Keyword retrieval error: {result.retrieval_diagnostics.keyword_error}</p>}
-                  {result.retrieval_diagnostics?.financial_document_error && <p>Document retrieval error: {result.retrieval_diagnostics.financial_document_error}</p>}
+                  {diag?.semantic_error && <p>Semantic retrieval error: {diag.semantic_error}</p>}
+                  {diag?.keyword_error && <p>Keyword retrieval error: {diag.keyword_error}</p>}
+                  {diag?.financial_document_error && <p>Document retrieval error: {diag.financial_document_error}</p>}
                 </>
               )}
             </section>
-            {result.missing_information?.length > 0 && <ResultBlock title="Information to collect" body={safeArray(result.missing_information).join(" · ")} />}
+
+            {safeArray(result.missing_information).length > 0 && (
+              <ResultBlock title="Information to collect" body={safeArray(result.missing_information).join(" · ")} />
+            )}
+
             <div className="modal-actions">
-              <button type="button" className="button button-secondary" onClick={downloadReport}><Download size={16} /> Download report as PDF</button>
-              <button type="button" className="button button-secondary" onClick={() => setResult(null)}>Close results</button>
+              <button type="button" className="button button-secondary" onClick={downloadReport}>
+                <Download size={16} /> Download report as PDF
+              </button>
+              <button type="button" className="button button-secondary" onClick={() => setResult(null)}>
+                Close results
+              </button>
             </div>
           </section>
         </div>,

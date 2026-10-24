@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 import re
 import threading
@@ -108,6 +109,8 @@ builder.add_edge("generate_confidence_reason", END)
 
 bugpilot_graph = builder.compile()
 
+logger = logging.getLogger(__name__)
+
 
 # ============================================================
 # PIPELINE DISPATCHER (fast by default) + RESULT CACHE
@@ -118,6 +121,12 @@ bugpilot_graph = builder.compile()
 #
 # Identical tickets submitted within BUGPILOT_RESULT_CACHE_TTL seconds are
 # answered from an in-process cache instead of re-running the whole model.
+#
+# FIX: degraded/fallback results are NEVER cached. The old code cached
+# every result for BUGPILOT_RESULT_CACHE_TTL (default 3600s), including
+# fallbacks produced while Ollama was down. That froze the "standard
+# template response" into the cache for a full hour, so even after the
+# provider was fixed, identical tickets kept returning the same fallback.
 
 PIPELINE_MODE = os.getenv("BUGPILOT_PIPELINE", "fast").strip().lower()
 if PIPELINE_MODE not in {"fast", "accurate"}:
@@ -219,11 +228,25 @@ def run_analysis(ticket_text: str) -> dict:
     else:
         result = bugpilot_graph.invoke(_initial_state(ticket_text))
 
-    _result_cache_put(cache_key, result)
+    # Only cache fully successful analyses. Degraded/fallback results
+    # (llm_status != "available") must not poison the cache: the moment
+    # the provider recovers, the next submission must get a real LLM run.
+    if result.get("llm_status") == "available":
+        _result_cache_put(cache_key, result)
+    else:
+        logger.warning(
+            "Skipping result cache: analysis finished in degraded mode "
+            "(llm_status=%s, mode=%s).",
+            result.get("llm_status"),
+            result.get("analysis_mode"),
+        )
+
     return result
 
 
 if __name__ == "__main__":
+
+    logging.basicConfig(level=logging.INFO)
 
     initial_state = {
         "ticket": "Payroll overtime salary is incorrect.",
@@ -234,6 +257,12 @@ if __name__ == "__main__":
         "problem": "",
         "keywords": [],
         "retrieved_context": "",
+        "retrieval_diagnostics": {},
+        "llm_status": "available",
+        "llm_error": "",
+        "ticket_understanding_status": "available",
+        "ticket_understanding_error": "",
+        "analysis_mode": "llm_rag",
         "analysis": "",
         "historical_evidence": "",
         "severity": "",
